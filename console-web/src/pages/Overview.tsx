@@ -9,7 +9,7 @@ export function Overview({ snapshot, onSelectTask }: { snapshot: ConsoleSnapshot
   const [selectedMetric, setSelectedMetric] = useState<HealthMetricKey>("running");
   const selectedTasks = useMemo(
     () => filterTasks(snapshot.tasks, selectedMetric),
-    [snapshot.tasks, selectedMetric]
+    [snapshot, selectedMetric]
   );
 
   return (
@@ -49,7 +49,7 @@ const APPROVAL_STATES = new Set(["HARD_APPROVAL_WAITING", "SOFT_APPROVAL_WAITING
 
 function filterTasks(tasks: ConsoleSnapshot["tasks"], metric: HealthMetricKey) {
   if (metric === "running") {
-    return tasks.filter((task) => RUNNING_STATES.has(task.status));
+    return tasks.filter((task) => RUNNING_STATES.has(task.status) && task.runtime?.live === true);
   }
   if (metric === "queued") {
     return tasks.filter((task) => QUEUED_STATES.has(task.status));

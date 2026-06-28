@@ -21,6 +21,7 @@ export type TaskSummary = {
   status: string;
   updated_at: string;
   route: { worker?: string; model?: string; variant?: string };
+  runtime?: { live: boolean; stale: boolean };
 };
 
 export type TimelineEvent = {

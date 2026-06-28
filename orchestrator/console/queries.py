@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,7 @@ TERMINAL_SUCCESS = {"DONE", "COMPLETED", "COMPLETED_WITH_PATCH", "PR_CREATED"}
 TERMINAL_FAILED = {"FAILED", "FAILED_FINAL"}
 RUNNING = {"EXECUTING", "RUNNING", "VERIFYING", "CODEX_REVIEWING", "REVIEWING"}
 APPROVAL_WAITING = {"HARD_APPROVAL_WAITING", "SOFT_APPROVAL_WAITING", "NEEDS_USER", "BLOCKED"}
+HEARTBEAT_FRESH_SECONDS = 120
 
 
 class ConsoleQueries:
@@ -32,9 +35,13 @@ class ConsoleQueries:
 
     def snapshot(self) -> dict[str, Any]:
         evaluate_alerts(self.db)
-        tasks = [task_summary(row) for row in self.db.list_tasks(limit=100)]
         alerts = [alert_view(row) for row in self.db.list_system_alerts(status="open", limit=50)]
         heartbeats = [heartbeat_view(row) for row in self.db.list_worker_heartbeats(limit=50)]
+        live_task_ids = _live_task_ids(heartbeats)
+        tasks = [
+            _with_runtime_liveness(task_summary(row), live_task_ids)
+            for row in self.db.list_tasks(limit=100)
+        ]
         metrics = self.metrics_summary()
         counts = _status_counts(tasks)
         return {
@@ -163,7 +170,8 @@ def _status_counts(tasks: list[dict[str, Any]]) -> dict[str, int]:
     counts = {"running": 0, "queued": 0, "failed": 0, "approval_waiting": 0}
     for task in tasks:
         status = str(task.get("status") or "")
-        if status in RUNNING:
+        runtime = task.get("runtime") if isinstance(task.get("runtime"), dict) else {}
+        if status in RUNNING and runtime.get("live") is True:
             counts["running"] += 1
         if status in {"QUEUED", "NEW", "PLANNED", "ROUTED"}:
             counts["queued"] += 1
@@ -174,10 +182,48 @@ def _status_counts(tasks: list[dict[str, Any]]) -> dict[str, int]:
     return counts
 
 
+def _with_runtime_liveness(task: dict[str, Any], live_task_ids: set[str]) -> dict[str, Any]:
+    status = str(task.get("status") or "")
+    task_id = str(task.get("task_id") or "")
+    live = status in RUNNING and task_id in live_task_ids
+    task["runtime"] = {
+        "live": live,
+        "stale": status in RUNNING and not live,
+    }
+    return task
+
+
+def _live_task_ids(heartbeats: list[dict[str, Any]]) -> set[str]:
+    now = time.time()
+    live: set[str] = set()
+    for heartbeat in heartbeats:
+        task_id = heartbeat.get("task_id")
+        if not task_id:
+            continue
+        status = str(heartbeat.get("status") or heartbeat.get("phase") or "")
+        phase = str(heartbeat.get("phase") or "")
+        if status not in RUNNING and phase not in RUNNING:
+            continue
+        ts = _parse_ts(heartbeat.get("ts"))
+        if ts is not None and now - ts <= HEARTBEAT_FRESH_SECONDS:
+            live.add(str(task_id))
+    return live
+
+
+def _parse_ts(value: Any) -> float | None:
+    if not value:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
 def _content_type(relative: str) -> str:
     if relative.endswith(".json"):
         return "application/json; charset=utf-8"
     if relative.endswith(".patch"):
         return "text/x-diff; charset=utf-8"
     return "text/plain; charset=utf-8"
-

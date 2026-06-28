@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from jsonschema import validate
@@ -66,6 +67,40 @@ def test_console_snapshot_matches_schema_and_redacts(tmp_path: Path):
     validate(payload, schema)
     assert status == 200
     assert "fake-redacted-value" not in json.dumps(payload)
+
+
+def test_console_snapshot_does_not_count_stale_executing_without_heartbeat(tmp_path: Path):
+    service = StubService(tmp_path)
+    task_id = _create_task(service, status="EXECUTING")
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    status, _, payload = api.handle_get("/api/console/snapshot")
+
+    assert status == 200
+    assert payload["health"]["running"] == 0
+    task = next(item for item in payload["tasks"] if item["task_id"] == task_id)
+    assert task["runtime"] == {"live": False, "stale": True}
+
+
+def test_console_snapshot_counts_executing_with_fresh_heartbeat(tmp_path: Path):
+    service = StubService(tmp_path)
+    task_id = _create_task(service, status="EXECUTING")
+    service.db.upsert_worker_heartbeat({
+        "worker_id": "worker-a",
+        "task_id": task_id,
+        "attempt_id": "attempt-a",
+        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "status": "EXECUTING",
+        "phase": "EXECUTING",
+    })
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    status, _, payload = api.handle_get("/api/console/snapshot")
+
+    assert status == 200
+    assert payload["health"]["running"] == 1
+    task = next(item for item in payload["tasks"] if item["task_id"] == task_id)
+    assert task["runtime"] == {"live": True, "stale": False}
 
 
 def test_task_detail_includes_lifecycle_and_artifacts(tmp_path: Path):
