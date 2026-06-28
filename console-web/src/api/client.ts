@@ -93,7 +93,7 @@ export type Alert = {
 };
 
 async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(path);
+  const response = await fetch(path, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}`);
   }
@@ -101,7 +101,7 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 async function getText(path: string): Promise<string> {
-  const response = await fetch(path);
+  const response = await fetch(path, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}`);
   }
@@ -109,7 +109,7 @@ async function getText(path: string): Promise<string> {
 }
 
 export const api = {
-  snapshot: () => getJson<ConsoleSnapshot>("/api/console/snapshot"),
+  snapshot: () => getJson<ConsoleSnapshot>(`/api/console/snapshot?t=${Date.now()}`),
   taskDetail: (taskId: string) => getJson<TaskDetail>(`/api/tasks/${encodeURIComponent(taskId)}`),
   taskArtifact: (taskId: string, artifactPath: string) =>
     getText(`/api/tasks/${encodeURIComponent(taskId)}/artifacts/${artifactPath}`),
