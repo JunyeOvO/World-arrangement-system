@@ -1,11 +1,12 @@
 import { CSSProperties, useEffect, useMemo, useState } from "react";
-import { ChartColumn, CircleDollarSign, Clock3, Gauge, Scale } from "lucide-react";
+import { ChartColumn, CircleDollarSign, Clock3, Gauge, Scale, TriangleAlert } from "lucide-react";
 import { api, ConsoleSnapshot, MetricsEfficiency, MetricsUsage } from "../api/client";
 
 export function Metrics({ snapshot }: { snapshot: ConsoleSnapshot }) {
   const [usage, setUsage] = useState<MetricsUsage | null>(null);
   const [efficiency, setEfficiency] = useState<MetricsEfficiency | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const failureCount = useMemo(() => countFailures(snapshot.metrics.failure_reasons), [snapshot.metrics.failure_reasons]);
 
   useEffect(() => {
     api.metricsUsage().then(setUsage).catch((err) => setError(err.message));
@@ -19,7 +20,8 @@ export function Metrics({ snapshot }: { snapshot: ConsoleSnapshot }) {
         <div className="summary-kpis">
           <MetricKpi label="Attempts" value={snapshot.metrics.attempts.toString()} icon={<Gauge size={18} />} />
           <MetricKpi label="Total cost" value={`$${snapshot.metrics.total_cost_usd.toFixed(4)}`} icon={<CircleDollarSign size={18} />} />
-          <MetricKpi label="P95 duration" value={`${snapshot.metrics.p95_duration_ms} ms`} icon={<Clock3 size={18} />} />
+          <MetricKpi label="P95 duration" value={formatDuration(snapshot.metrics.p95_duration_ms)} icon={<Clock3 size={18} />} />
+          <MetricKpi label="Failures" value={failureCount.toString()} icon={<TriangleAlert size={18} />} />
         </div>
       </section>
       <ModelSummary models={snapshot.models} />
@@ -56,7 +58,7 @@ function ModelSummary({ models }: { models: ConsoleSnapshot["models"] }) {
       </div>
       <div className="compact-models">
         {models.length === 0 && <div className="compact-empty">No model metrics yet</div>}
-        {models.slice(0, 4).map((model) => (
+        {models.map((model) => (
           <div className="compact-model-row" key={`${model.worker}-${model.model}`}>
             <div>
               <strong>{model.model || "unknown"}</strong>
@@ -255,4 +257,26 @@ function formatDateTime(value: string) {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US").format(value);
+}
+
+function formatDuration(ms: number) {
+  if (!Number.isFinite(ms) || ms <= 0) return "0 ms";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds} s`;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (totalMinutes < 60) return seconds ? `${totalMinutes}m ${seconds}s` : `${totalMinutes}m`;
+  const totalHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (totalHours < 24) return minutes ? `${totalHours}h ${minutes}m` : `${totalHours}h`;
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  return hours ? `${days}d ${hours}h` : `${days}d`;
+}
+
+function countFailures(reasons: Record<string, number>) {
+  return Object.entries(reasons).reduce((total, [reason, count]) => {
+    return reason === "none" ? total : total + count;
+  }, 0);
 }

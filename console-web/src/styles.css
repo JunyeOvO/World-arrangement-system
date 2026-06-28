@@ -225,7 +225,7 @@ small {
 
 .metrics-page {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
 }
 
@@ -258,14 +258,17 @@ small {
   grid-column: 1 / -1;
 }
 
-.metrics-summary-panel,
+.metrics-summary-panel {
+  min-height: 152px;
+}
+
 .model-summary-panel {
-  min-height: 150px;
+  min-height: 0;
 }
 
 .summary-kpis {
   display: grid;
-  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  grid-template-columns: repeat(4, minmax(140px, 1fr));
   gap: 10px;
 }
 
@@ -294,6 +297,7 @@ small {
 .summary-kpi strong {
   grid-column: 2;
   font-size: 22px;
+  white-space: nowrap;
 }
 
 .efficiency-kpis {
@@ -360,8 +364,12 @@ small {
 
 .compact-models {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+  scroll-snap-type: x proximity;
 }
 
 .compact-model-row,
@@ -373,10 +381,13 @@ small {
 }
 
 .compact-model-row {
+  flex: 0 0 260px;
+  min-height: 76px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  scroll-snap-align: start;
 }
 
 .compact-model-row strong {
@@ -780,7 +791,10 @@ dd {
 
   .health-strip,
   .detail-grid,
-  .metrics-page {
+  .metrics-page,
+  .summary-kpis,
+  .efficiency-kpis,
+  .codex-kpis {
     grid-template-columns: 1fr;
   }
 
