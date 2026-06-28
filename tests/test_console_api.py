@@ -474,10 +474,86 @@ def test_metrics_usage_returns_cost_series_and_call_rows(tmp_path: Path):
     assert payload["cost_series"]["dates"] == ["2026-06-28"]
     assert payload["cost_series"]["models"] == ["GLM-5.2"]
     assert payload["cost_series"]["rows"] == [
-        {"date": "2026-06-28", "model": "GLM-5.2", "cost_usd": 0.0139}
+        {"date": "2026-06-28", "model": "GLM-5.2", "cost_usd": 0.064695}
     ]
     assert payload["calls"][0]["worker"] == "Opencode"
     assert payload["calls"][0]["model"] == "GLM-5.2"
     assert payload["calls"][0]["input_tokens"] == 45978
     assert payload["calls"][0]["output_tokens"] == 74
+    assert payload["calls"][0]["cost_usd"] == 0.064695
     assert payload["calls"][0]["session"] == "_metrics"
+
+
+def test_metrics_summary_and_models_compute_cost_from_tokens(tmp_path: Path):
+    service = StubService(tmp_path)
+    _create_task(service, status="COMPLETED_WITH_PATCH", task_id="task_pricing")
+    service.db.upsert_task_metrics({
+        "task_id": "task_pricing",
+        "attempt_no": 1,
+        "worker": "claude_code",
+        "model": "deepseek_pro",
+        "status": "success",
+        "failure_reason": "",
+        "total_cost_usd": 99.99,
+        "duration_ms": 1000,
+        "duration_api_ms": 900,
+        "num_turns": 1,
+        "input_tokens": 1_000_000,
+        "output_tokens": 1_000_000,
+        "cache_read_input_tokens": 1_000_000,
+        "changed_files_count": 1,
+        "build_passed": True,
+        "review_approved": True,
+        "created_at": "2026-06-28T13:12:00Z",
+    })
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    _, _, summary = api.handle_get("/api/metrics/summary")
+    _, _, models = api.handle_get("/api/metrics/models")
+
+    assert summary["total_cost_usd"] == 1.308625
+    assert models["models"][0]["worker"] == "Claudecode"
+    assert models["models"][0]["model"] == "Deepseek-V4-pro"
+    assert models["models"][0]["avg_cost_usd"] == 1.308625
+    assert models["models"][0]["total_cost_usd"] == 1.308625
+
+
+def test_model_metrics_merges_display_name_aliases(tmp_path: Path):
+    service = StubService(tmp_path)
+    _create_task(service, status="COMPLETED_WITH_PATCH", task_id="task_glm_a")
+    _create_task(service, status="COMPLETED_WITH_PATCH", task_id="task_glm_b")
+    for task_id, model in (
+        ("task_glm_a", "opencode-go/glm-5.2"),
+        ("task_glm_b", "opencode_go_glm52"),
+    ):
+        service.db.upsert_task_metrics({
+            "task_id": task_id,
+            "attempt_no": 1,
+            "worker": "opencode",
+            "model": model,
+            "status": "success",
+            "failure_reason": "",
+            "total_cost_usd": 99.99,
+            "duration_ms": 1000,
+            "duration_api_ms": 900,
+            "num_turns": 1,
+            "input_tokens": 1_000,
+            "output_tokens": 100,
+            "cache_read_input_tokens": 500,
+            "changed_files_count": 1,
+            "build_passed": True,
+            "review_approved": True,
+            "created_at": "2026-06-28T13:12:00Z",
+        })
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    _, _, models = api.handle_get("/api/metrics/models")
+
+    assert models["models"] == [{
+        "worker": "Opencode",
+        "model": "GLM-5.2",
+        "attempts": 2,
+        "avg_cost_usd": 0.00197,
+        "success_rate": 1.0,
+        "total_cost_usd": 0.00394,
+    }]

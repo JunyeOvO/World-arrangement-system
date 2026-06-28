@@ -15,8 +15,9 @@ from orchestrator.dashboard_status import (
 )
 from orchestrator.db import TaskDB
 
-from .display_names import display_route_tree
+from .display_names import display_agent_name, display_model_name, display_route_tree
 from .alerts import evaluate_alerts
+from .pricing import calculate_token_cost_usd
 from .serializers import (
     alert_view,
     artifact_allowed,
@@ -194,11 +195,8 @@ class ConsoleQueries:
         return 200, _content_type(relative), target.read_text(encoding="utf-8", errors="replace")[:100_000]
 
     def metrics_summary(self) -> dict[str, Any]:
-        tasks = self.db.list_tasks(limit=500)
-        rows: list[dict[str, Any]] = []
-        for task in tasks:
-            rows.extend(self.db.list_task_metrics(task["task_id"]))
-        total = sum(float(row.get("total_cost_usd") or 0) for row in rows)
+        rows = self._metric_rows()
+        total = sum(calculate_token_cost_usd(row) for row in rows)
         durations = sorted(int(row.get("duration_ms") or 0) for row in rows)
         p95 = durations[int(len(durations) * 0.95) - 1] if durations else 0
         failures: dict[str, int] = {}
@@ -213,7 +211,36 @@ class ConsoleQueries:
         }
 
     def model_metrics(self) -> list[dict[str, Any]]:
-        return [metric_view(row) for row in self.db.model_metrics_summary()]
+        grouped: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in self._metric_rows():
+            worker = display_agent_name(row.get("worker"))
+            model = display_model_name(row.get("model"))
+            key = (str(worker or ""), str(model or ""))
+            item = grouped.setdefault(key, {
+                "worker": worker,
+                "model": model,
+                "attempts": 0,
+                "total_cost_usd": 0.0,
+                "successes": 0,
+            })
+            item["attempts"] += 1
+            item["total_cost_usd"] += calculate_token_cost_usd(row)
+            if str(row.get("status") or "") in {"success", "COMPLETED_WITH_PATCH", "PR_CREATED", "DONE"}:
+                item["successes"] += 1
+        summary = []
+        for item in grouped.values():
+            attempts = int(item["attempts"] or 0)
+            avg_cost = (float(item["total_cost_usd"]) / attempts) if attempts else 0.0
+            summary.append({
+                "worker": item["worker"],
+                "model": item["model"],
+                "attempts": attempts,
+                "avg_cost_usd": round(avg_cost, 6),
+                "success_rate": (float(item["successes"]) / attempts) if attempts else 0.0,
+                "total_cost_usd": round(float(item["total_cost_usd"]), 6),
+            })
+        summary.sort(key=lambda row: (-int(row["attempts"]), str(row["model"])))
+        return summary
 
     def metrics_usage(self, limit: int = 200) -> dict[str, Any]:
         rows = [metric_view(row) for row in self.db.list_recent_task_metrics(limit=limit)]
@@ -225,7 +252,7 @@ class ConsoleQueries:
             created_at = str(row.get("created_at") or "")
             date = _metric_date(created_at)
             model = str(row.get("model") or "unknown")
-            cost = float(row.get("total_cost_usd") or 0)
+            cost = calculate_token_cost_usd(row)
             dates.add(date)
             models.add(model)
             cost_by_day_model[(date, model)] = cost_by_day_model.get((date, model), 0.0) + cost
@@ -253,6 +280,13 @@ class ConsoleQueries:
             },
             "calls": calls,
         }
+
+    def _metric_rows(self) -> list[dict[str, Any]]:
+        tasks = self.db.list_tasks(limit=500)
+        rows: list[dict[str, Any]] = []
+        for task in tasks:
+            rows.extend(self.db.list_task_metrics(task["task_id"]))
+        return rows
 
     def audit(self, task_id: str | None = None, action: str | None = None, limit: int = 100) -> dict[str, Any]:
         return {"events": [event_view(row) for row in self.db.list_audit_events(task_id, action, limit)]}
