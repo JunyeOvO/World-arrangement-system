@@ -20,6 +20,7 @@ export type TaskSummary = {
   user_goal: string;
   status: string;
   display_status?: string;
+  console_group?: "running" | "queued" | "failed" | "approval" | "none";
   status_note?: string;
   updated_at: string;
   route: { worker?: string; model?: string; variant?: string };

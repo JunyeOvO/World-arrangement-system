@@ -113,6 +113,7 @@ def test_console_snapshot_does_not_count_stale_executing_without_heartbeat(tmp_p
     task = next(item for item in payload["tasks"] if item["task_id"] == task_id)
     assert task["runtime"] == {"live": False, "stale": True}
     assert task["display_status"] == "STALE_EXECUTING"
+    assert task["console_group"] == "none"
     assert "No fresh worker heartbeat" in task["status_note"]
 
 
@@ -160,6 +161,7 @@ def test_console_snapshot_counts_executing_with_fresh_heartbeat(tmp_path: Path):
     task = next(item for item in payload["tasks"] if item["task_id"] == task_id)
     assert task["runtime"] == {"live": True, "stale": False}
     assert task["display_status"] == "EXECUTING"
+    assert task["console_group"] == "running"
     assert task["status_note"] == ""
 
 
@@ -178,6 +180,7 @@ def test_console_snapshot_counts_executing_with_fresh_control_heartbeat(tmp_path
     assert task["runtime"]["control_heartbeat_status"] == "running"
     assert task["runtime"]["control_heartbeat_live"] is True
     assert task["display_status"] == "EXECUTING"
+    assert task["console_group"] == "running"
 
 
 def test_console_snapshot_uses_finished_worker_state_when_db_still_executing(tmp_path: Path):
@@ -198,6 +201,7 @@ def test_console_snapshot_uses_finished_worker_state_when_db_still_executing(tmp
         "process_finished": True,
     }
     assert task["display_status"] == "WORKER_SUCCEEDED"
+    assert task["console_group"] == "none"
     assert "raw task status remains EXECUTING" in task["status_note"]
 
 
@@ -214,6 +218,28 @@ def test_console_snapshot_counts_failed_worker_state_when_db_still_executing(tmp
     assert payload["health"]["failed"] == 1
     task = next(item for item in payload["tasks"] if item["task_id"] == task_id)
     assert task["display_status"] == "WORKER_FAILED"
+    assert task["console_group"] == "failed"
+
+
+def test_console_snapshot_assigns_status_groups(tmp_path: Path):
+    service = StubService(tmp_path)
+    _create_task(service, status="NEW", task_id="task_queued")
+    _create_task(service, status="NEEDS_USER", task_id="task_approval")
+    _create_task(service, status="FAILED_FINAL", task_id="task_failed")
+    _create_task(service, status="COMPLETED_NO_CHANGES", task_id="task_done")
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    status, _, payload = api.handle_get("/api/console/snapshot")
+
+    assert status == 200
+    assert payload["health"]["queued"] == 1
+    assert payload["health"]["approval_waiting"] == 1
+    assert payload["health"]["failed"] == 1
+    groups = {task["task_id"]: task["console_group"] for task in payload["tasks"]}
+    assert groups["task_queued"] == "queued"
+    assert groups["task_approval"] == "approval"
+    assert groups["task_failed"] == "failed"
+    assert groups["task_done"] == "none"
 
 
 def test_task_detail_includes_lifecycle_and_artifacts(tmp_path: Path):
@@ -240,6 +266,7 @@ def test_task_detail_marks_stale_executing_without_heartbeat(tmp_path: Path):
     assert status == 200
     assert payload["task"]["runtime"] == {"live": False, "stale": True}
     assert payload["task"]["display_status"] == "STALE_EXECUTING"
+    assert payload["task"]["console_group"] == "none"
     assert "No fresh worker heartbeat" in payload["task"]["status_note"]
 
 

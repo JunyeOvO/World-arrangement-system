@@ -66,23 +66,18 @@ export function Overview({
   );
 }
 
-const RUNNING_STATES = new Set(["EXECUTING", "RUNNING", "VERIFYING", "CODEX_REVIEWING", "REVIEWING"]);
-const QUEUED_STATES = new Set(["QUEUED", "NEW", "PLANNED", "ROUTED", "WORKTREE_CREATED", "WORKTREE_READY"]);
-const FAILED_STATES = new Set(["FAILED", "FAILED_FINAL"]);
-const APPROVAL_STATES = new Set(["HARD_APPROVAL_WAITING", "SOFT_APPROVAL_WAITING", "NEEDS_USER", "BLOCKED"]);
-
 function filterTasks(tasks: ConsoleSnapshot["tasks"], metric: HealthMetricKey) {
   if (metric === "running") {
-    return tasks.filter((task) => RUNNING_STATES.has(task.status) && task.runtime?.live === true);
+    return tasks.filter((task) => task.console_group === "running");
   }
   if (metric === "queued") {
-    return tasks.filter((task) => QUEUED_STATES.has(task.status));
+    return tasks.filter((task) => task.console_group === "queued");
   }
   if (metric === "failed") {
-    return tasks.filter((task) => FAILED_STATES.has(task.status));
+    return tasks.filter((task) => task.console_group === "failed");
   }
   if (metric === "approval") {
-    return tasks.filter((task) => APPROVAL_STATES.has(task.status));
+    return tasks.filter((task) => task.console_group === "approval");
   }
   if (metric === "cost") {
     return tasks.filter((task) => task.route.model || task.route.worker);

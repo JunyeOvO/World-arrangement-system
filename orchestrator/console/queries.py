@@ -31,6 +31,20 @@ TERMINAL_SUCCESS = {
 }
 TERMINAL_FAILED = {"FAILED", "FAILED_FINAL"}
 RUNNING = {"EXECUTING", "RUNNING", "VERIFYING", "CODEX_REVIEWING", "REVIEWING"}
+QUEUED = {
+    "QUEUED",
+    "NEW",
+    "CLASSIFIED",
+    "DYNAMIC_RISK_SCORED",
+    "APPROVAL_DECIDED",
+    "AUTO_SILENT",
+    "AUTO_WITH_SUMMARY",
+    "PLANNED",
+    "ROUTED",
+    "WORKTREE_CREATED",
+    "WORKTREE_READY",
+    "RETRYING",
+}
 APPROVAL_WAITING = {"HARD_APPROVAL_WAITING", "SOFT_APPROVAL_WAITING", "NEEDS_USER", "BLOCKED"}
 HEARTBEAT_FRESH_SECONDS = 120
 PROCESS_TERMINAL_DISPLAY = {
@@ -41,6 +55,14 @@ PROCESS_TERMINAL_DISPLAY = {
 }
 PROCESS_FAILED_DISPLAY = {"WORKER_FAILED", "WORKER_TIMED_OUT"}
 PROCESS_RUNNING = {"running"}
+CONSOLE_GROUP_DESCRIPTIONS = {
+    "running": "Fresh worker heartbeat/control heartbeat exists; this is actively executing now.",
+    "queued": "Task is accepted and can continue without user input, but no worker is currently live.",
+    "failed": "Task or worker reached a failure state that needs retry, dismissal, or investigation.",
+    "approval": "Task is paused for user approval, user input, or policy decision; NEEDS_USER belongs here.",
+    "alerts": "System-level alerts such as stale worker heartbeats; this is not a task lifecycle bucket.",
+    "none": "Completed, cancelled, stale-without-failure, or otherwise not actionable from the top status strip.",
+}
 
 
 class ConsoleQueries:
@@ -236,15 +258,14 @@ class ConsoleQueries:
 def _status_counts(tasks: list[dict[str, Any]]) -> dict[str, int]:
     counts = {"running": 0, "queued": 0, "failed": 0, "approval_waiting": 0}
     for task in tasks:
-        status = str(task.get("status") or "")
-        runtime = task.get("runtime") if isinstance(task.get("runtime"), dict) else {}
-        if status in RUNNING and runtime.get("live") is True:
+        group = str(task.get("console_group") or "")
+        if group == "running":
             counts["running"] += 1
-        if status in {"QUEUED", "NEW", "PLANNED", "ROUTED"}:
+        if group == "queued":
             counts["queued"] += 1
-        if status in TERMINAL_FAILED or task.get("display_status") in PROCESS_FAILED_DISPLAY:
+        if group == "failed":
             counts["failed"] += 1
-        if status in APPROVAL_WAITING:
+        if group == "approval":
             counts["approval_waiting"] += 1
     return counts
 
@@ -286,7 +307,20 @@ def _with_runtime_liveness(
     else:
         task["display_status"] = status
         task["status_note"] = ""
+    task["console_group"] = _console_group(status, str(task.get("display_status") or ""), live)
     return task
+
+
+def _console_group(status: str, display_status: str, live: bool) -> str:
+    if status in APPROVAL_WAITING:
+        return "approval"
+    if status in TERMINAL_FAILED or display_status in PROCESS_FAILED_DISPLAY:
+        return "failed"
+    if status in RUNNING and live:
+        return "running"
+    if status in QUEUED:
+        return "queued"
+    return "none"
 
 
 def _live_task_ids(heartbeats: list[dict[str, Any]]) -> set[str]:
