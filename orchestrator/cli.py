@@ -43,6 +43,8 @@ def main(argv: list[str] | None = None) -> int:
     submit.add_argument("--worker", default=None, help="Force a worker for this task, e.g. opencode")
     submit.add_argument("--model", default=None, help="Force a model for this task, e.g. opencode-go/glm-5.2")
     submit.add_argument("--variant", default=None, help="Force a capability/CLI variant for this task, e.g. high or max")
+    submit.add_argument("--image-path", action="append", default=[], help="Local PNG/JPEG path for MiMo vision observation")
+    submit.add_argument("--image-base64", action="append", default=[], help="Inline base64 PNG/JPEG or data URL for MiMo vision observation")
     status = sub.add_parser("get-task-status")
     status.add_argument("--task-id", required=True)
     result = sub.add_parser("read-task-result")
@@ -84,6 +86,8 @@ def main(argv: list[str] | None = None) -> int:
                 args.worker,
                 args.model,
                 args.variant,
+                args.image_path,
+                args.image_base64,
             )
         )
     if args.cmd == "get-task-status":

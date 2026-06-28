@@ -45,12 +45,44 @@ def create_server():
         return service.world_doctor(repo_path)
 
     @mcp.tool()
-    def submit_task(project_id: str, user_goal: str, risk_level: str = "medium", auto_execute: bool = True, auto_pr: bool = False):
-        return service.submit_task(project_id, user_goal, risk_level, auto_execute, auto_pr)
+    def submit_task(
+        project_id: str,
+        user_goal: str,
+        risk_level: str = "medium",
+        auto_execute: bool = True,
+        auto_pr: bool = False,
+        image_paths: list[str] | None = None,
+        image_base64: list[str] | None = None,
+    ):
+        return service.submit_task(
+            project_id,
+            user_goal,
+            risk_level,
+            auto_execute,
+            auto_pr,
+            image_paths=image_paths,
+            image_base64=image_base64,
+        )
 
     @mcp.tool()
-    def submit_current_project_task(repo_path: str, user_goal: str, risk_level: str = "medium", auto_execute: bool = True, auto_pr: bool = False):
-        return service.submit_current_project_task(user_goal, repo_path, risk_level, auto_execute, auto_pr)
+    def submit_current_project_task(
+        repo_path: str,
+        user_goal: str,
+        risk_level: str = "medium",
+        auto_execute: bool = True,
+        auto_pr: bool = False,
+        image_paths: list[str] | None = None,
+        image_base64: list[str] | None = None,
+    ):
+        return service.submit_current_project_task(
+            user_goal,
+            repo_path,
+            risk_level,
+            auto_execute,
+            auto_pr,
+            image_paths=image_paths,
+            image_base64=image_base64,
+        )
 
     @mcp.tool()
     def get_task_status(task_id: str):

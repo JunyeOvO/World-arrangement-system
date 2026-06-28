@@ -17,6 +17,7 @@ from .failure_classifier import (
     classify_worker_failure,
 )
 from .metrics import collect_task_metrics, write_metrics
+from .multimodal import load_image_inputs
 from .permissions import check_write_paths
 from .pr import create_pr_or_patch
 from .project_registry import detect_project, load_projects
@@ -46,6 +47,7 @@ from .approval_explainer import explain_decision
 from .policy_update_engine import PolicyUpdateEngine
 from .process_control import request_cancel
 from .workers.claude_code_worker import ClaudeCodeWorker
+from .workers.mimo_vision_adapter import MimoVisionAdapter
 from .workers.opencode_worker import OpenCodeWorker
 
 
@@ -192,11 +194,13 @@ class OrchestratorService:
         auto_execute: bool = True,
         auto_pr: bool = False,
         dry_run: bool = False,
+        image_paths: list[str] | None = None,
+        image_base64: list[str] | None = None,
     ) -> dict[str, Any]:
         match = detect_project(repo_path=repo_path or ".")
         if match.needs_user or not match.project_id:
             return {"status": "NEEDS_USER", "message": "project could not be detected", "match": match.__dict__}
-        return self.submit_task(match.project_id, user_goal, risk_level, auto_execute, auto_pr, dry_run)
+        return self.submit_task(match.project_id, user_goal, risk_level, auto_execute, auto_pr, dry_run, image_paths=image_paths, image_base64=image_base64)
 
     def submit_task(
         self,
@@ -209,6 +213,8 @@ class OrchestratorService:
         force_worker: str | None = None,
         force_model: str | None = None,
         force_variant: str | None = None,
+        image_paths: list[str] | None = None,
+        image_base64: list[str] | None = None,
     ) -> dict[str, Any]:
         projects = load_projects()
         if project_id not in projects:
@@ -233,6 +239,8 @@ class OrchestratorService:
             "test_commands": project.get("test_commands", []),
             "build_commands": project.get("build_commands", []),
             "forbidden_paths": project.get("forbidden_paths", []),
+            "image_paths": image_paths or [],
+            "image_base64": image_base64 or [],
         }
         if force_worker or force_model or force_variant:
             task["route_override"] = {
@@ -271,7 +279,7 @@ class OrchestratorService:
             return {"status": "NOT_FOUND", "task_id": task_id}
         index = self.artifacts.index(task_id)
         result: dict[str, Any] = {"task": task, "artifacts": index}
-        for key in ["final.md", "review/review.json", "verify/verify.json", "verify/diff.patch", "metrics.json", "result.json"]:
+        for key in ["final.md", "review/review.json", "verify/verify.json", "verify/diff.patch", "metrics.json", "multimodal/vision_observation.json", "result.json"]:
             path = index.get(key)
             if path:
                 text = Path(path).read_text(encoding="utf-8", errors="replace")
@@ -489,6 +497,17 @@ class OrchestratorService:
         self.artifacts.write_json(task_id, "worktree.json", wt.__dict__)
         task["worktree_path"] = wt.path
         self._set_status(task_id, "WORKTREE_READY", "worktree_ready", wt.__dict__)
+
+        if task.get("image_paths") or task.get("image_base64"):
+            observation = self._run_mimo_vision(task, dry_run=dry_run)
+            task["vision_observation"] = observation
+            task["vision_observation_path"] = str(Path(task["run_dir"]) / "multimodal" / "vision_observation.json")
+            self.artifacts.write_json(task_id, "task.json", task)
+            self._set_status(task_id, "WORKTREE_READY", "vision_observation_ready", {
+                "path": task["vision_observation_path"],
+                "degraded": observation.get("degraded", False),
+                "confidence": observation.get("confidence"),
+            })
 
         # ── Inject AGENTS.md for OpenCodeWorker (skip if user file exists) ──
         if route.get("selected_worker") == "opencode":
@@ -857,6 +876,19 @@ class OrchestratorService:
             return _apply_route_override(dict(plan_result["plan"]["route"]), task)
         return _apply_route_override(plan_route(task, project, history=self.db.model_metrics_summary()).to_dict(), task)
 
+    def _run_mimo_vision(self, task: dict[str, Any], dry_run: bool = False) -> dict[str, Any]:
+        images = load_image_inputs(task.get("image_paths"), task.get("image_base64"))
+        adapter = MimoVisionAdapter()
+        observation = adapter.analyze(
+            task_id=task["task_id"],
+            prompt=task["user_goal"],
+            images=images,
+            output_path=Path(task["run_dir"]) / "multimodal" / "vision_observation.json",
+            model_key="mimo_v25",
+            dry_run=dry_run,
+        )
+        return observation.to_dict()
+
     def _build_world_plan_route(self, user_goal: str, risk_level: str, project: dict[str, Any]) -> dict[str, Any]:
         return plan_route(
             {"user_goal": user_goal, "risk_level": risk_level},
@@ -1201,6 +1233,12 @@ def _worker_prompt(task: dict[str, Any], route: dict[str, Any]) -> str:
         "World Core will run the listed verification commands after you return; do not spend many turns on full-suite testing.\n"
         "Return changed_files, summary, test_suggestions, risks, needs_user."
     )
+    if task.get("vision_observation"):
+        task_section += (
+            "\n\n## Vision Observation\n\n"
+            "Use this MiMo direct-API observation as visual context. Do not call `claude --file`.\n"
+            f"{json.dumps(task['vision_observation'], ensure_ascii=False, indent=2)}\n"
+        )
     if worker == "opencode":
         prompt_path = _OPENCODE_WORKER_PROMPT_PATH
         if prompt_path.exists():

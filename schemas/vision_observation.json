@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VisionObservation",
+  "type": "object",
+  "required": [
+    "task_id",
+    "image_refs",
+    "observations",
+    "ui_elements",
+    "defects",
+    "implementation_hints",
+    "confidence"
+  ],
+  "properties": {
+    "task_id": { "type": "string" },
+    "image_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source", "mime_type", "sha256", "size_bytes"],
+        "properties": {
+          "source": { "type": "string" },
+          "mime_type": { "type": "string", "enum": ["image/png", "image/jpeg"] },
+          "sha256": { "type": "string" },
+          "size_bytes": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "observations": { "type": "array", "items": { "type": "string" } },
+    "ui_elements": { "type": "array", "items": { "type": "object" } },
+    "defects": { "type": "array", "items": { "type": "object" } },
+    "implementation_hints": { "type": "array", "items": { "type": "string" } },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "model": { "type": "string" },
+    "provider": { "type": "string" },
+    "degraded": { "type": "boolean" },
+    "degradation_reason": { "type": ["string", "null"] },
+    "created_at": { "type": "string" }
+  },
+  "additionalProperties": true
+}
