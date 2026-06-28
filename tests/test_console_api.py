@@ -110,11 +110,13 @@ def test_console_snapshot_does_not_count_stale_executing_without_heartbeat(tmp_p
 
     assert status == 200
     assert payload["health"]["running"] == 0
+    assert payload["health"]["open_alerts"] == 1
     task = next(item for item in payload["tasks"] if item["task_id"] == task_id)
     assert task["runtime"] == {"live": False, "stale": True}
     assert task["display_status"] == "STALE_EXECUTING"
-    assert task["console_group"] == "none"
-    assert "No fresh worker heartbeat" in task["status_note"]
+    assert task["big_status"] == "Alerts"
+    assert task["console_group"] == "alerts"
+    assert "no fresh heartbeat" in task["status_note"]
 
 
 def test_console_snapshot_auto_dismisses_stale_executing_when_project_completed(tmp_path: Path):
@@ -193,6 +195,7 @@ def test_console_snapshot_uses_finished_worker_state_when_db_still_executing(tmp
 
     assert status == 200
     assert payload["health"]["running"] == 0
+    assert payload["health"]["open_alerts"] == 1
     task = next(item for item in payload["tasks"] if item["task_id"] == task_id)
     assert task["runtime"] == {
         "live": False,
@@ -200,9 +203,9 @@ def test_console_snapshot_uses_finished_worker_state_when_db_still_executing(tmp
         "process_status": "succeeded",
         "process_finished": True,
     }
-    assert task["display_status"] == "WORKER_SUCCEEDED"
-    assert task["console_group"] == "none"
-    assert "raw task status remains EXECUTING" in task["status_note"]
+    assert task["display_status"] == "STALE_EXECUTING"
+    assert task["console_group"] == "alerts"
+    assert "no fresh heartbeat" in task["status_note"]
 
 
 def test_console_snapshot_counts_failed_worker_state_when_db_still_executing(tmp_path: Path):
@@ -237,13 +240,55 @@ def test_console_snapshot_assigns_status_groups(tmp_path: Path):
     assert payload["health"]["queued"] == 1
     assert payload["health"]["approval_waiting"] == 2
     assert payload["health"]["failed"] == 1
+    assert payload["health"]["open_alerts"] == 1
     groups = {task["task_id"]: task["console_group"] for task in payload["tasks"]}
     assert groups["task_queued"] == "queued"
     assert groups["task_approval"] == "approval"
     assert groups["task_review"] == "approval"
-    assert groups["task_retrying"] == "none"
+    assert groups["task_retrying"] == "alerts"
     assert groups["task_failed"] == "failed"
     assert groups["task_done"] == "none"
+
+
+def test_dashboard_summary_uses_derived_big_status_counts(tmp_path: Path):
+    service = StubService(tmp_path)
+    _create_task(service, status="EXECUTING", task_id="task_stale")
+    _create_task(service, status="NEEDS_USER", task_id="task_approval")
+    _create_task(service, status="FAILED_FINAL", task_id="task_failed")
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    status, _, payload = api.handle_get("/api/dashboard/summary")
+
+    assert status == 200
+    assert payload["counts"] == {
+        "Running": 0,
+        "Queued": 0,
+        "Failed": 1,
+        "Approval": 1,
+        "Alerts": 1,
+    }
+    assert "updated_at" in payload
+
+
+def test_dashboard_tasks_can_filter_by_big_status(tmp_path: Path):
+    service = StubService(tmp_path)
+    task_id = _create_task(service, status="RETRYING", task_id="task_retrying")
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    status, _, payload = api.handle_get("/api/dashboard/tasks", "big_status=Alerts")
+
+    assert status == 200
+    assert payload["next_cursor"] is None
+    assert payload["items"] == [{
+        "task_id": task_id,
+        "raw_status": "RETRYING",
+        "display_status": "RETRY_STUCK",
+        "big_status": "Alerts",
+        "project_id": "project-a",
+        "goal": "ship console",
+        "reason": "retry has no reliable scheduler state",
+        "updated_at": "2026-06-28T00:00:00Z",
+    }]
 
 
 def test_task_detail_includes_lifecycle_and_artifacts(tmp_path: Path):
@@ -270,8 +315,10 @@ def test_task_detail_marks_stale_executing_without_heartbeat(tmp_path: Path):
     assert status == 200
     assert payload["task"]["runtime"] == {"live": False, "stale": True}
     assert payload["task"]["display_status"] == "STALE_EXECUTING"
-    assert payload["task"]["console_group"] == "none"
-    assert "No fresh worker heartbeat" in payload["task"]["status_note"]
+    assert payload["task"]["raw_status"] == "EXECUTING"
+    assert payload["task"]["big_status"] == "Alerts"
+    assert payload["task"]["console_group"] == "alerts"
+    assert "no fresh heartbeat" in payload["task"]["status_note"]
 
 
 def test_task_detail_uses_finished_worker_state_when_db_still_executing(tmp_path: Path):
@@ -285,6 +332,7 @@ def test_task_detail_uses_finished_worker_state_when_db_still_executing(tmp_path
     assert status == 200
     assert payload["task"]["runtime"]["process_status"] == "timed_out"
     assert payload["task"]["display_status"] == "WORKER_TIMED_OUT"
+    assert payload["task"]["big_status"] == "Failed"
 
 
 def test_artifact_whitelist_blocks_env_and_path_escape(tmp_path: Path):

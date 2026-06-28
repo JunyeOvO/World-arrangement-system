@@ -17,7 +17,25 @@
         "cost_today_usd": {"type": "number"}
       }
     },
-    "tasks": {"type": "array"},
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["task_id", "status", "raw_status", "display_status", "big_status", "console_group"],
+        "properties": {
+          "task_id": {"type": "string"},
+          "status": {"type": "string"},
+          "raw_status": {"type": "string"},
+          "display_status": {"type": "string"},
+          "big_status": {"type": "string", "enum": ["Running", "Queued", "Failed", "Approval", "Alerts", "Done", "Closed"]},
+          "console_group": {"type": "string", "enum": ["running", "queued", "failed", "approval", "alerts", "none"]},
+          "status_reason": {"type": "string"},
+          "is_terminal": {"type": "boolean"},
+          "requires_user_action": {"type": "boolean"}
+        },
+        "additionalProperties": true
+      }
+    },
     "alerts": {"type": "array"},
     "heartbeats": {"type": "array"},
     "metrics": {"type": "object"},
@@ -25,4 +43,3 @@
   },
   "additionalProperties": true
 }
-

@@ -47,6 +47,8 @@ export function TaskDetail({ taskId }: { taskId: string }) {
         <p>{detail.task.user_goal}</p>
         <span className={`status ${visibleStatus.toLowerCase()}`}>{visibleStatus}</span>
         {detail.task.status_note && <small>{detail.task.status_note}</small>}
+        {detail.task.big_status && <small>Big status: {detail.task.big_status}</small>}
+        {detail.task.status_reason && <small>Reason: {detail.task.status_reason}</small>}
         {detail.task.display_status && detail.task.display_status !== detail.task.status && (
           <small>Raw state: {detail.task.status}</small>
         )}

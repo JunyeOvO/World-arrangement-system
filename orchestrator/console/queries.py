@@ -7,6 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from orchestrator.artifacts import ArtifactStore
+from orchestrator.dashboard_status import (
+    ACTIVE_STATUSES,
+    DONE_STATUSES,
+    compute_top_status_counts,
+    derive_dashboard_status,
+)
 from orchestrator.db import TaskDB
 
 from .alerts import evaluate_alerts
@@ -21,46 +27,14 @@ from .serializers import (
 )
 
 
-TERMINAL_SUCCESS = {
-    "DONE",
-    "COMPLETED",
-    "COMPLETED_WITH_PATCH",
-    "COMPLETED_NO_CHANGES",
-    "COMPLETED_WITH_ARTIFACTS",
-    "DRY_RUN_COMPLETED",
-    "PR_CREATED",
-}
-TERMINAL_FAILED = {"FAILED", "FAILED_FINAL"}
-RUNNING = {"EXECUTING", "RUNNING", "VERIFYING", "CODEX_REVIEWING", "REVIEWING"}
-QUEUED = {
-    "QUEUED",
-    "NEW",
-    "CLASSIFIED",
-    "DYNAMIC_RISK_SCORED",
-    "APPROVAL_DECIDED",
-    "AUTO_SILENT",
-    "AUTO_WITH_SUMMARY",
-    "PLANNED",
-    "ROUTED",
-    "WORKTREE_CREATED",
-    "WORKTREE_READY",
-}
-APPROVAL_WAITING = {"HARD_APPROVAL_WAITING", "SOFT_APPROVAL_WAITING", "NEEDS_USER", "NEEDS_REVIEW", "BLOCKED"}
 HEARTBEAT_FRESH_SECONDS = 120
-PROCESS_TERMINAL_DISPLAY = {
-    "succeeded": "WORKER_SUCCEEDED",
-    "failed": "WORKER_FAILED",
-    "timed_out": "WORKER_TIMED_OUT",
-    "cancelled": "WORKER_CANCELLED",
-}
-PROCESS_FAILED_DISPLAY = {"WORKER_FAILED", "WORKER_TIMED_OUT"}
 PROCESS_RUNNING = {"running"}
 CONSOLE_GROUP_DESCRIPTIONS = {
     "running": "Fresh worker heartbeat/control heartbeat exists; this is actively executing now.",
     "queued": "Task is accepted and can continue without user input, but no worker is currently live.",
     "failed": "Task or worker reached a failure state that needs retry, dismissal, or investigation.",
     "approval": "Task is paused for user approval, user input, or policy decision; NEEDS_USER belongs here.",
-    "alerts": "System-level alerts such as stale worker heartbeats; this is not a task lifecycle bucket.",
+    "alerts": "System-level or runtime-derived anomalies such as stale workers, stuck retry, or unknown statuses.",
     "none": "Completed, cancelled, stale-without-failure, or otherwise not actionable from the top status strip.",
 }
 
@@ -84,15 +58,15 @@ class ConsoleQueries:
             if row.get("task_id") not in dismissed
         ]
         metrics = self.metrics_summary()
-        counts = _status_counts(tasks)
+        counts = compute_top_status_counts(tasks, system_alert_count=len(alerts))
         return {
             "health": {
-                "status": "alerting" if alerts else "healthy",
+                "status": "alerting" if counts["alerts"] else "healthy",
                 "running": counts["running"],
                 "queued": counts["queued"],
                 "failed": counts["failed"],
                 "approval_waiting": counts["approval_waiting"],
-                "open_alerts": len(alerts),
+                "open_alerts": counts["alerts"],
                 "cost_today_usd": metrics["total_cost_usd"],
             },
             "tasks": tasks,
@@ -101,6 +75,56 @@ class ConsoleQueries:
             "metrics": metrics,
             "models": self.model_metrics(),
         }
+
+    def dashboard_summary(self, project_id: str | None = None, include_completed: bool = False) -> dict[str, Any]:
+        snapshot = self.snapshot()
+        tasks = snapshot["tasks"]
+        if project_id:
+            tasks = [task for task in tasks if task.get("project_id") == project_id]
+        if not include_completed:
+            tasks = [task for task in tasks if task.get("console_group") != "none"]
+        counts = compute_top_status_counts(tasks, system_alert_count=len(snapshot["alerts"]))
+        return {
+            "counts": {
+                "Running": counts["running"],
+                "Queued": counts["queued"],
+                "Failed": counts["failed"],
+                "Approval": counts["approval_waiting"],
+                "Alerts": counts["alerts"],
+            },
+            "updated_at": _now(),
+        }
+
+    def dashboard_tasks(
+        self,
+        big_status: str | None = None,
+        limit: int = 50,
+        project_id: str | None = None,
+        include_completed: bool = False,
+    ) -> dict[str, Any]:
+        snapshot = self.snapshot()
+        normalized_big_status = _normalize_big_status(big_status)
+        items: list[dict[str, Any]] = []
+        for task in snapshot["tasks"]:
+            if project_id and task.get("project_id") != project_id:
+                continue
+            if not include_completed and task.get("console_group") == "none":
+                continue
+            if normalized_big_status and task.get("big_status") != normalized_big_status:
+                continue
+            items.append({
+                "task_id": task.get("task_id"),
+                "raw_status": task.get("raw_status") or task.get("status"),
+                "display_status": task.get("display_status"),
+                "big_status": task.get("big_status"),
+                "project_id": task.get("project_id"),
+                "goal": task.get("user_goal"),
+                "reason": task.get("status_reason"),
+                "updated_at": task.get("updated_at"),
+            })
+            if len(items) >= limit:
+                break
+        return {"items": items, "next_cursor": None}
 
     def list_tasks(
         self,
@@ -255,21 +279,6 @@ class ConsoleQueries:
         return value if isinstance(value, dict) else {"value": value}
 
 
-def _status_counts(tasks: list[dict[str, Any]]) -> dict[str, int]:
-    counts = {"running": 0, "queued": 0, "failed": 0, "approval_waiting": 0}
-    for task in tasks:
-        group = str(task.get("console_group") or "")
-        if group == "running":
-            counts["running"] += 1
-        if group == "queued":
-            counts["queued"] += 1
-        if group == "failed":
-            counts["failed"] += 1
-        if group == "approval":
-            counts["approval_waiting"] += 1
-    return counts
-
-
 def _with_runtime_liveness(
     task: dict[str, Any],
     live_task_ids: set[str],
@@ -281,13 +290,18 @@ def _with_runtime_liveness(
     process = _read_control_json(raw.get("run_dir"), "process.json")
     control_heartbeat = _read_control_json(raw.get("run_dir"), "heartbeat.json")
     control_live = _control_heartbeat_live(control_heartbeat)
-    live = status in RUNNING and (task_id in live_task_ids or control_live)
+    heartbeat_fresh = status in ACTIVE_STATUSES and (task_id in live_task_ids or control_live)
+    dashboard_status = derive_dashboard_status(
+        raw,
+        heartbeat_fresh=heartbeat_fresh,
+        control_process=process,
+    )
     runtime: dict[str, Any] = {
-        "live": live,
-        "stale": status in RUNNING and not live,
+        "live": dashboard_status.is_live,
+        "stale": dashboard_status.is_stale,
     }
     process_status = str(process.get("status") or "")
-    process_finished = bool(process_status in PROCESS_TERMINAL_DISPLAY or process.get("finished_at"))
+    process_finished = bool(process_status or process.get("finished_at"))
     if process_status:
         runtime["process_status"] = process_status
         runtime["process_finished"] = process_finished
@@ -296,31 +310,15 @@ def _with_runtime_liveness(
         runtime["control_heartbeat_status"] = control_heartbeat_status
         runtime["control_heartbeat_live"] = control_live
     task["runtime"] = runtime
-    if status in RUNNING and not live and process_status in PROCESS_TERMINAL_DISPLAY:
-        task["display_status"] = PROCESS_TERMINAL_DISPLAY[process_status]
-        task["status_note"] = (
-            f"Worker process is {process_status}; raw task status remains {status}."
-        )
-    elif status in RUNNING and not live:
-        task["display_status"] = "STALE_EXECUTING"
-        task["status_note"] = "No fresh worker heartbeat; raw task status is stale."
-    else:
-        task["display_status"] = status
-        task["status_note"] = ""
-    task["console_group"] = _console_group(status, str(task.get("display_status") or ""), live)
+    task["raw_status"] = dashboard_status.raw_status
+    task["display_status"] = dashboard_status.display_status
+    task["big_status"] = dashboard_status.big_status
+    task["console_group"] = dashboard_status.console_group
+    task["is_terminal"] = dashboard_status.is_terminal
+    task["requires_user_action"] = dashboard_status.requires_user_action
+    task["status_reason"] = dashboard_status.reason
+    task["status_note"] = "" if dashboard_status.display_status == status else dashboard_status.reason
     return task
-
-
-def _console_group(status: str, display_status: str, live: bool) -> str:
-    if status in APPROVAL_WAITING:
-        return "approval"
-    if status in TERMINAL_FAILED or display_status in PROCESS_FAILED_DISPLAY:
-        return "failed"
-    if status in RUNNING and live:
-        return "running"
-    if status in QUEUED:
-        return "queued"
-    return "none"
 
 
 def _live_task_ids(heartbeats: list[dict[str, Any]]) -> set[str]:
@@ -332,7 +330,7 @@ def _live_task_ids(heartbeats: list[dict[str, Any]]) -> set[str]:
             continue
         status = str(heartbeat.get("status") or heartbeat.get("phase") or "")
         phase = str(heartbeat.get("phase") or "")
-        if status not in RUNNING and phase not in RUNNING:
+        if status not in ACTIVE_STATUSES and phase not in ACTIVE_STATUSES:
             continue
         ts = _parse_ts(heartbeat.get("ts"))
         if ts is not None and now - ts <= HEARTBEAT_FRESH_SECONDS:
@@ -364,7 +362,7 @@ def _read_control_json(run_dir: Any, name: str) -> dict[str, Any]:
 
 def _control_heartbeat_live(heartbeat: dict[str, Any]) -> bool:
     status = str(heartbeat.get("status") or "")
-    if status.lower() not in PROCESS_RUNNING and status.upper() not in RUNNING:
+    if status.lower() not in PROCESS_RUNNING and status.upper() not in ACTIVE_STATUSES:
         return False
     ts = _parse_ts(heartbeat.get("last_seen") or heartbeat.get("ts"))
     return ts is not None and time.time() - ts <= HEARTBEAT_FRESH_SECONDS
@@ -380,6 +378,26 @@ def _session_label(task_id: str) -> str:
     return task_id[-8:] if len(task_id) > 8 else task_id
 
 
+def _normalize_big_status(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = str(value).strip().lower()
+    mapping = {
+        "running": "Running",
+        "queued": "Queued",
+        "failed": "Failed",
+        "approval": "Approval",
+        "alerts": "Alerts",
+        "done": "Done",
+        "closed": "Closed",
+    }
+    return mapping.get(normalized, value)
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
 def _auto_dismiss_superseded_stale_running_tasks(
     db: TaskDB,
     tasks: list[dict[str, Any]],
@@ -389,7 +407,7 @@ def _auto_dismiss_superseded_stale_running_tasks(
     latest_success_by_project: dict[str, str] = {}
     for task in tasks:
         status = str(task.get("status") or "")
-        if status not in TERMINAL_SUCCESS:
+        if status not in DONE_STATUSES:
             continue
         project_id = str(task.get("project_id") or "")
         updated_at = str(task.get("updated_at") or "")
@@ -402,7 +420,7 @@ def _auto_dismiss_superseded_stale_running_tasks(
         if not task_id or task_id in dismissed or task_id in live_task_ids:
             continue
         status = str(task.get("status") or "")
-        if status not in RUNNING:
+        if status not in ACTIVE_STATUSES:
             continue
         project_id = str(task.get("project_id") or "")
         completed_at = latest_success_by_project.get(project_id)

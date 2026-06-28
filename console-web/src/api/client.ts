@@ -19,9 +19,14 @@ export type TaskSummary = {
   project_id: string;
   user_goal: string;
   status: string;
+  raw_status?: string;
   display_status?: string;
-  console_group?: "running" | "queued" | "failed" | "approval" | "none";
+  big_status?: "Running" | "Queued" | "Failed" | "Approval" | "Alerts" | "Done" | "Closed";
+  console_group?: "running" | "queued" | "failed" | "approval" | "alerts" | "none";
   status_note?: string;
+  status_reason?: string;
+  is_terminal?: boolean;
+  requires_user_action?: boolean;
   updated_at: string;
   route: { worker?: string; model?: string; variant?: string };
   runtime?: { live: boolean; stale: boolean };

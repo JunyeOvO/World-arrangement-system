@@ -79,6 +79,9 @@ function filterTasks(tasks: ConsoleSnapshot["tasks"], metric: HealthMetricKey) {
   if (metric === "approval") {
     return tasks.filter((task) => task.console_group === "approval");
   }
+  if (metric === "alerts") {
+    return tasks.filter((task) => task.console_group === "alerts");
+  }
   if (metric === "cost") {
     return tasks.filter((task) => task.route.model || task.route.worker);
   }

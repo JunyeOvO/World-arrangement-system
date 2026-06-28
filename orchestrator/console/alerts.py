@@ -4,17 +4,15 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from orchestrator.dashboard_status import ACTIVE_STATUSES
 from orchestrator.db import TaskDB
-
-
-RUNNING_STATES = {"EXECUTING", "RUNNING", "VERIFYING", "CODEX_REVIEWING", "REVIEWING"}
 
 
 def evaluate_alerts(db: TaskDB, stale_seconds: int = 120) -> list[dict[str, Any]]:
     now_ts = time.time()
     opened: list[dict[str, Any]] = []
     for heartbeat in db.list_worker_heartbeats(limit=500):
-        if heartbeat.get("status") not in RUNNING_STATES and heartbeat.get("phase") not in RUNNING_STATES:
+        if heartbeat.get("status") not in ACTIVE_STATUSES and heartbeat.get("phase") not in ACTIVE_STATUSES:
             continue
         ts = _parse_ts(heartbeat.get("ts"))
         if ts is None or now_ts - ts <= stale_seconds:
@@ -50,4 +48,3 @@ def _parse_ts(value: Any) -> float | None:
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-

@@ -25,16 +25,32 @@ export function ProcessCards({
   onDismissTask: (taskId: string) => void;
 }) {
   const canDismissTask = group === "failed" || group === "approval";
+  const alertCount = alerts.length + tasks.length;
 
   return (
     <section className="panel process-panel">
       <div className="panel-head">
         <h2>{GROUP_TITLES[group]}</h2>
-        <span className="process-count">{group === "alerts" ? alerts.length : tasks.length}</span>
+        <span className="process-count">{group === "alerts" ? alertCount : tasks.length}</span>
       </div>
       {group === "alerts" ? (
         <div className="process-grid">
-          {alerts.length === 0 && <EmptyProcessState />}
+          {alertCount === 0 && <EmptyProcessState />}
+          {tasks.map((task) => (
+            <article className="process-card alert-card" key={task.task_id}>
+              <div className="process-card-top">
+                <span className={`status ${(task.display_status || task.status).toLowerCase()}`}>
+                  {task.display_status || task.status}
+                </span>
+                <small>{task.big_status || "Alerts"}</small>
+              </div>
+              <strong>{task.user_goal || "Codex task"}</strong>
+              <p>{task.status_reason || task.status_note || task.task_id}</p>
+              <button type="button" onClick={() => onSelectTask(task.task_id)}>
+                Detail <ArrowRight size={14} />
+              </button>
+            </article>
+          ))}
           {alerts.map((alert) => (
             <article className="process-card alert-card" key={alert.alert_id}>
               <div className="process-card-top">

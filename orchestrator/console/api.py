@@ -27,6 +27,20 @@ class ConsoleAPI:
         if path == "/api/console/snapshot":
             self._reap_stale_tasks_for_snapshot()
             return 200, "application/json", self.queries.snapshot()
+        if path == "/api/dashboard/summary":
+            self._reap_stale_tasks_for_snapshot()
+            return 200, "application/json", self.queries.dashboard_summary(
+                project_id=params.get("project_id"),
+                include_completed=_bool(params.get("include_completed")),
+            )
+        if path == "/api/dashboard/tasks":
+            self._reap_stale_tasks_for_snapshot()
+            return 200, "application/json", self.queries.dashboard_tasks(
+                big_status=params.get("big_status"),
+                limit=_int(params.get("limit"), 50),
+                project_id=params.get("project_id"),
+                include_completed=_bool(params.get("include_completed")),
+            )
         if path == "/api/tasks":
             return 200, "application/json", self.queries.list_tasks(
                 params.get("status"),
@@ -180,3 +194,7 @@ def _int(value: str | None, default: int) -> int:
         return int(value) if value is not None else default
     except ValueError:
         return default
+
+
+def _bool(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
