@@ -1,4 +1,5 @@
 """Hotpatch-required worker tests."""
+import json
 from pathlib import Path
 
 from orchestrator.process_control import ManagedProcessResult
@@ -195,6 +196,44 @@ def test_claude_worker_uses_route_max_turns(monkeypatch, tmp_path):
     assert observed["args"][idx + 1] == "24"
 
 
+def test_claude_worker_summary_uses_stream_result_and_ignores_prompt_for_launch_permissions(monkeypatch, tmp_path):
+    expected = "Travel With Me quality: solid architecture, good tests, remaining visual QA risk."
+
+    def _build_command(value, args, env_overrides=None, cwd=None):
+        return ["claude", *args]
+
+    def _success(cmd, **kwargs):
+        stdout_path = Path(kwargs["stdout_path"])
+        stdout_path.parent.mkdir(parents=True, exist_ok=True)
+        stdout_path.write_text(
+            json.dumps({"type": "result", "subtype": "success", "result": expected}) + "\n",
+            encoding="utf-8",
+        )
+        return ManagedProcessResult(
+            returncode=0,
+            stdout_path=str(stdout_path),
+            stderr_path=str(tmp_path / "worker" / "stderr.log"),
+            status="succeeded",
+        )
+
+    monkeypatch.setenv("AI_CLAUDE_CMD", "claude")
+    monkeypatch.setattr("orchestrator.workers.claude_code_worker.command_available", lambda cmd: (True, cmd))
+    monkeypatch.setattr("orchestrator.workers.claude_code_worker.build_command", _build_command)
+    monkeypatch.setattr("orchestrator.workers.claude_code_worker.run_managed_process", _success)
+
+    worker = ClaudeCodeWorker()
+    task = {"run_dir": str(tmp_path), "task_id": "t_summary", "test_commands": [], "build_commands": []}
+    result = worker.run(
+        "Review text mentioning --dangerously-skip-permissions, but do not use it.",
+        tmp_path,
+        {"selected_model": "deepseek_flash"},
+        task,
+    )
+
+    assert result.status == "success"
+    assert result.summary == expected
+
+
 def test_opencode_worker_timeout_returns_failure(monkeypatch, tmp_path):
     def _timeout(*args, **kwargs):
         return ManagedProcessResult(
@@ -287,6 +326,55 @@ def test_opencode_worker_blocks_denied_launch_command(monkeypatch, tmp_path):
 
     worker = OpenCodeWorker()
     task = {"run_dir": str(tmp_path), "task_id": "t_denied", "test_commands": [], "build_commands": []}
+    result = worker.run("prompt", tmp_path, {"selected_model": "opencode-go/glm-5.2"}, task)
+
+    assert result.status == "blocked"
+    assert called["run"] is False
+    assert any("dangerously-skip-permissions" in risk for risk in result.risks)
+
+
+def test_opencode_worker_does_not_scan_prompt_for_launch_permissions(monkeypatch, tmp_path):
+    called = {"run": False}
+
+    def _success(*args, **kwargs):
+        called["run"] = True
+        return ManagedProcessResult(
+            returncode=0,
+            stdout_path=str(tmp_path / "worker" / "worker.stdout.jsonl"),
+            stderr_path=str(tmp_path / "worker" / "stderr.log"),
+            status="succeeded",
+        )
+
+    monkeypatch.setenv("AI_OPENCODE_CMD", "opencode")
+    monkeypatch.setattr("orchestrator.workers.opencode_worker.command_available", lambda cmd: (True, cmd))
+    monkeypatch.setattr("orchestrator.workers.opencode_worker.run_managed_process", _success)
+
+    worker = OpenCodeWorker()
+    task = {"run_dir": str(tmp_path), "task_id": "t_prompt_text", "test_commands": [], "build_commands": []}
+    result = worker.run(
+        "Review the policy text mentioning --dangerously-skip-permissions, but do not use that flag.",
+        tmp_path,
+        {"selected_model": "opencode-go/glm-5.2"},
+        task,
+    )
+
+    assert result.status == "success"
+    assert called["run"] is True
+
+
+def test_opencode_worker_still_blocks_denied_launcher_env(monkeypatch, tmp_path):
+    called = {"run": False}
+
+    def _run(*args, **kwargs):
+        called["run"] = True
+        raise AssertionError("denied launcher command should not execute")
+
+    monkeypatch.setenv("AI_OPENCODE_CMD", "opencode --dangerously-skip-permissions")
+    monkeypatch.setattr("orchestrator.workers.opencode_worker.command_available", lambda cmd: (True, cmd))
+    monkeypatch.setattr("orchestrator.workers.opencode_worker.run_managed_process", _run)
+
+    worker = OpenCodeWorker()
+    task = {"run_dir": str(tmp_path), "task_id": "t_denied_env", "test_commands": [], "build_commands": []}
     result = worker.run("prompt", tmp_path, {"selected_model": "opencode-go/glm-5.2"}, task)
 
     assert result.status == "blocked"

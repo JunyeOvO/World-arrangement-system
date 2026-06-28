@@ -100,9 +100,19 @@ async function getJson<T>(path: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function getText(path: string): Promise<string> {
+  const response = await fetch(path);
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}`);
+  }
+  return response.text();
+}
+
 export const api = {
   snapshot: () => getJson<ConsoleSnapshot>("/api/console/snapshot"),
   taskDetail: (taskId: string) => getJson<TaskDetail>(`/api/tasks/${encodeURIComponent(taskId)}`),
+  taskArtifact: (taskId: string, artifactPath: string) =>
+    getText(`/api/tasks/${encodeURIComponent(taskId)}/artifacts/${artifactPath}`),
   metrics: () => getJson<MetricsSummary>("/api/metrics/summary"),
   metricsUsage: () => getJson<MetricsUsage>("/api/metrics/usage?limit=200"),
   models: () => getJson<{ models: ModelMetric[] }>("/api/metrics/models"),

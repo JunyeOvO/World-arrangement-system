@@ -6,14 +6,33 @@ import { TaskTimeline } from "../components/TaskTimeline";
 
 export function TaskDetail({ taskId }: { taskId: string }) {
   const [detail, setDetail] = useState<TaskDetailData | null>(null);
+  const [output, setOutput] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+  const [outputError, setOutputError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.taskDetail(taskId).then(setDetail).catch((err) => setError(err.message));
+    setDetail(null);
+    setOutput("");
+    setOutputError(null);
+    api.taskDetail(taskId)
+      .then((payload) => {
+        setDetail(payload);
+        const hasFinal = payload.artifacts.some((artifact) => artifact.path === "final.md");
+        if (!hasFinal) {
+          setOutputError("No final output recorded yet.");
+          return;
+        }
+        api.taskArtifact(taskId, "final.md")
+          .then(setOutput)
+          .catch((err) => setOutputError(err.message));
+      })
+      .catch((err) => setError(err.message));
   }, [taskId]);
 
   if (error) return <section className="panel danger">{error}</section>;
   if (!detail) return <section className="panel">Loading task...</section>;
+
+  const visibleStatus = detail.task.display_status || detail.task.status;
 
   return (
     <div className="detail-grid">
@@ -26,12 +45,20 @@ export function TaskDetail({ taskId }: { taskId: string }) {
           </div>
         </div>
         <p>{detail.task.user_goal}</p>
-        <span className={`status ${detail.task.status.toLowerCase()}`}>{detail.task.status}</span>
+        <span className={`status ${visibleStatus.toLowerCase()}`}>{visibleStatus}</span>
+        {detail.task.status_note && <small>{detail.task.status_note}</small>}
+        {detail.task.display_status && detail.task.display_status !== detail.task.status && (
+          <small>Raw state: {detail.task.status}</small>
+        )}
       </section>
       <RouteDecisionCard route={detail.route_decision} />
       <section className="panel">
         <h2>Timeline</h2>
         <TaskTimeline events={detail.timeline} />
+      </section>
+      <section className="panel output-panel">
+        <h2>Output</h2>
+        {output ? <pre>{output}</pre> : <p>{outputError || "Loading output..."}</p>}
       </section>
       <section className="panel">
         <h2>Verify</h2>
@@ -50,4 +77,3 @@ export function TaskDetail({ taskId }: { taskId: string }) {
     </div>
   );
 }
-

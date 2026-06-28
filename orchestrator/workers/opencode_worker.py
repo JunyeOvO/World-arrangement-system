@@ -128,11 +128,19 @@ class OpenCodeWorker(Worker):
         if cli_variant:
             args[1:1] = ["--variant", cli_variant]
         cmd = build_command(opencode_cmd, args, {}, cwd=worktree)
+        # Validate launcher and fixed CLI args only. The user/system prompt is a
+        # data argument and may legitimately mention denied flags while asking
+        # the worker to avoid them; scanning it would create false BLOCKED tasks.
+        launch_check_args = [*args[:-1], "<prompt>"]
+        launch_check_cmd = build_command(opencode_cmd, launch_check_args, {}, cwd=worktree)
         # A4: post-construction guard — never allow --variant with an illegal value
         # (e.g. "default") to reach the opencode CLI. Bypasses of _normalize_variant
         # trip this and fail the worker fast with a clear error.
-        assert_valid_opencode_args(cmd)
-        command_check = check_worker_launch_command(self.name, shlex.join(str(part) for part in cmd))
+        assert_valid_opencode_args(launch_check_cmd)
+        command_check = check_worker_launch_command(
+            self.name,
+            shlex.join(str(part) for part in launch_check_cmd),
+        )
         if not command_check.allowed:
             return WorkerResult(
                 "blocked",

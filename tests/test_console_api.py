@@ -149,6 +149,19 @@ def test_task_detail_includes_lifecycle_and_artifacts(tmp_path: Path):
     assert payload["artifacts"][0]["url"].startswith(f"/api/tasks/{task_id}/artifacts/")
 
 
+def test_task_detail_marks_stale_executing_without_heartbeat(tmp_path: Path):
+    service = StubService(tmp_path)
+    task_id = _create_task(service, status="EXECUTING")
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    status, _, payload = api.handle_get(f"/api/tasks/{task_id}")
+
+    assert status == 200
+    assert payload["task"]["runtime"] == {"live": False, "stale": True}
+    assert payload["task"]["display_status"] == "STALE_EXECUTING"
+    assert "No fresh worker heartbeat" in payload["task"]["status_note"]
+
+
 def test_artifact_whitelist_blocks_env_and_path_escape(tmp_path: Path):
     service = StubService(tmp_path)
     task_id = _create_task(service)

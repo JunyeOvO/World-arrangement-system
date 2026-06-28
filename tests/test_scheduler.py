@@ -7,7 +7,9 @@ from orchestrator.scheduler import (
     _build_retry_chain,
     _is_retryable_failure,
     _should_recover_failed_worker_diff,
+    _skip_project_verification_for_read_only_task,
     _task_requires_diff,
+    _task_requests_project_verification,
     _worker_prompt,
 )
 
@@ -150,6 +152,40 @@ def test_edit_task_requires_diff():
     assert _task_requires_diff({"user_goal": "Find one bug and fix it", "task_type": "simple_bugfix"})
     assert not _task_requires_diff({"user_goal": "Analyze the repo", "task_type": "analysis"})
     assert not _task_requires_diff({"user_goal": "Find one bug and fix it", "allow_empty_diff": True})
+    assert not _task_requires_diff({
+        "user_goal": "目标：简单评价 Travel_with_me 项目质量。约束：只做只读分析，不修改文件，返回项目质量评价。",
+    })
+    assert _task_requires_diff({"user_goal": "先分析根因，然后修复登录 bug"})
+
+
+def test_read_only_task_skips_project_verification_without_explicit_request():
+    class Result:
+        changed_files: list[str] = []
+
+    task = {
+        "user_goal": "目标：简单评价 Travel_with_me 项目质量。约束：只做只读分析，不修改文件，返回项目质量评价。",
+    }
+
+    assert not _task_requests_project_verification(task)
+    assert _skip_project_verification_for_read_only_task(task, Result())
+
+
+def test_verifiable_path_wording_does_not_force_project_verification():
+    task = {
+        "user_goal": "简单评价项目质量，按任务性质选择最小可验证路径，只做只读分析，不修改文件。",
+    }
+
+    assert not _task_requests_project_verification(task)
+
+
+def test_explicit_test_request_does_not_skip_project_verification():
+    class Result:
+        changed_files: list[str] = []
+
+    task = {"user_goal": "Analyze the repo and run npm test"}
+
+    assert _task_requests_project_verification(task)
+    assert not _skip_project_verification_for_read_only_task(task, Result())
 
 
 def test_opencode_prompt_embeds_context_without_external_artifact_paths(tmp_path):

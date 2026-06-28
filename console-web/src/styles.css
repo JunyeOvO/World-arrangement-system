@@ -217,6 +217,15 @@ small {
   grid-column: 1 / -1;
 }
 
+.output-panel {
+  grid-column: 1 / -1;
+}
+
+.output-panel pre {
+  max-height: 560px;
+  white-space: pre-wrap;
+}
+
 .metrics-summary-panel,
 .model-summary-panel {
   min-height: 150px;

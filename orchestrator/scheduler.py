@@ -731,9 +731,14 @@ class OrchestratorService:
 
         # ── Verify ──
         self._set_status(task_id, "VERIFYING", "verify_started", {})
+        test_commands = list(task.get("test_commands", []))
+        build_commands = list(task.get("build_commands", []))
+        if _skip_project_verification_for_read_only_task(task, final_result):
+            test_commands = []
+            build_commands = []
         verify_result = verify(
-            Path(wt.path), task.get("test_commands", []),
-            task.get("build_commands", []),
+            Path(wt.path), test_commands,
+            build_commands,
             Path(task["run_dir"]) / "verify",
         ) if not dry_run else _dry_verify(task)
         forbidden = check_changed_files(verify_result.changed_files, task.get("forbidden_paths"))
@@ -1178,6 +1183,41 @@ def _task_requires_diff(task: dict[str, Any]) -> bool:
     task_type = str(task.get("task_type", "")).lower()
     if task.get("allow_empty_diff") is True:
         return False
+    read_only_markers = (
+        "analyze",
+        "analysis",
+        "evaluate",
+        "assessment",
+        "review",
+        "inspect",
+        "read-only",
+        "no changes",
+        "do not modify",
+        "do not edit",
+        "只读",
+        "分析",
+        "评价",
+        "评估",
+        "审查",
+        "检查",
+        "不修改",
+        "不要修改",
+        "不改",
+        "不要改",
+        "不写入",
+    )
+    strong_edit_markers = (
+        "fix",
+        "implement",
+        "refactor",
+        "修复",
+        "实现",
+        "新增",
+    )
+    if any(marker in goal for marker in read_only_markers) and not any(
+        marker in goal for marker in strong_edit_markers
+    ):
+        return False
     edit_markers = (
         "fix",
         "bug",
@@ -1197,6 +1237,34 @@ def _task_requires_diff(task: dict[str, Any]) -> bool:
     if any(marker in goal for marker in edit_markers):
         return True
     return task_type in {"simple_bugfix", "routine_coding", "complex_coding", "hard_bugfix", "large_refactor"}
+
+
+def _task_requests_project_verification(task: dict[str, Any]) -> bool:
+    goal = str(task.get("user_goal", "")).lower()
+    verification_markers = (
+        "run tests",
+        "run test",
+        "npm test",
+        "npm run check",
+        "pytest",
+        "vitest",
+        "playwright",
+        "运行验证",
+        "执行验证",
+        "跑验证",
+        "运行测试",
+        "跑测试",
+        "执行测试",
+    )
+    return any(marker in goal for marker in verification_markers)
+
+
+def _skip_project_verification_for_read_only_task(task: dict[str, Any], worker_result: Any) -> bool:
+    return (
+        not _task_requires_diff(task)
+        and not getattr(worker_result, "changed_files", [])
+        and not _task_requests_project_verification(task)
+    )
 
 
 def _is_retryable_failure(result) -> bool:

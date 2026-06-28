@@ -18,6 +18,7 @@ from ..process_control import run_managed_process
 # ── Providers ClaudeCodeWorker is allowed to use (Hotpatch: no GLM) ──
 _ALLOWED_PROVIDERS = {"deepseek", "mimo"}
 _FORBIDDEN_MODEL_PATTERNS = ["glm", "z_ai", "z.ai", "chatglm"]
+_SUMMARY_LIMIT = 8000
 
 # ── Minimal env allowlist for worker subprocess (security: no full os.environ copy) ──
 _BASE_ENV_ALLOWLIST = {
@@ -146,6 +147,42 @@ def _collect_worktree_patch(
     return changed_files, patch_file, rollback_notes, ownership_violations
 
 
+def _extract_claude_stream_result(path: Path, limit: int = _SUMMARY_LIMIT) -> str | None:
+    if not path.exists():
+        return None
+
+    result_text: str | None = None
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") == "result" and isinstance(event.get("result"), str):
+            result_text = event["result"].strip()
+        message = event.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, list):
+                text_parts = [
+                    item.get("text", "")
+                    for item in content
+                    if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str)
+                ]
+                if text_parts:
+                    result_text = "\n".join(text_parts).strip()
+
+    if not result_text:
+        return None
+    if len(result_text) <= limit:
+        return result_text
+    return result_text[:limit].rstrip() + "\n\n[truncated]"
+
+
 class ClaudeCodeWorker(Worker):
     name = "claude_code"
 
@@ -213,27 +250,34 @@ class ClaudeCodeWorker(Worker):
                 str(stdout_path),
                 str(stderr_path),
             )
+        args = [
+            "-p",
+            "--model",
+            profile_env.get("ANTHROPIC_MODEL", selected_model),
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--max-turns",
+            str(int(route.get("max_turns", 20))),
+            "--no-session-persistence",
+            "--permission-mode",
+            "acceptEdits",
+            "--allowedTools=Read,Edit,Bash",
+            prompt,
+        ]
         cmd = build_command(
             claude_cmd,
-            [
-                "-p",
-                "--model",
-                profile_env.get("ANTHROPIC_MODEL", selected_model),
-                "--output-format",
-                "stream-json",
-                "--verbose",
-                "--max-turns",
-                str(int(route.get("max_turns", 20))),
-                "--no-session-persistence",
-                "--permission-mode",
-                "acceptEdits",
-                "--allowedTools=Read,Edit,Bash",
-                prompt,
-            ],
+            args,
             profile_env,
             cwd=worktree,
         )
-        command_check = check_worker_launch_command(self.name, shlex.join(str(part) for part in cmd))
+        launch_check_cmd = build_command(
+            claude_cmd,
+            [*args[:-1], "<prompt>"],
+            profile_env,
+            cwd=worktree,
+        )
+        command_check = check_worker_launch_command(self.name, shlex.join(str(part) for part in launch_check_cmd))
         if not command_check.allowed:
             return WorkerResult(
                 "blocked",
@@ -299,9 +343,10 @@ class ClaudeCodeWorker(Worker):
             risks.append("diff_exported_after_worker_failure")
         if ownership_violations:
             risks.extend(ownership_violations)
+        summary = _extract_claude_stream_result(stdout_path) if success else None
         return WorkerResult(
             "success" if success else "failed",
-            "Claude Code worker finished" if success else "Claude Code worker failed with exported diff" if patch_file else "Claude Code worker failed",
+            summary or ("Claude Code worker finished" if success else "Claude Code worker failed with exported diff" if patch_file else "Claude Code worker failed"),
             changed_files,
             task.get("test_commands", []),
             risks,

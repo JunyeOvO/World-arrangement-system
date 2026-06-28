@@ -84,6 +84,8 @@ class ConsoleQueries:
         task = self.db.get_task(task_id)
         if not task:
             return {"status": "NOT_FOUND", "task_id": task_id}
+        heartbeats = [heartbeat_view(row) for row in self.db.list_worker_heartbeats(limit=50)]
+        live_task_ids = _live_task_ids(heartbeats)
         events = [event_view(row) for row in self.db.list_events(task_id)]
         metrics = [metric_view(row) for row in self.db.list_task_metrics(task_id)]
         artifact_index = self.artifacts.index(task_id)
@@ -92,7 +94,7 @@ class ConsoleQueries:
         verify = self._read_artifact_json(artifact_index, "verify/verify.json")
         review = self._read_artifact_json(artifact_index, "review/review.json")
         return {
-            "task": task_summary(task),
+            "task": _with_runtime_liveness(task_summary(task), live_task_ids),
             "timeline": events,
             "route_decision": route,
             "approval": approval,
