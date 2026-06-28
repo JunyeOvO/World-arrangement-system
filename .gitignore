@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets and local environment
+.env
+*.env
+!*.env.example
+profiles/*.env
+!profiles/*.env.example
+.claude/settings.local.json
+
+# Runtime output
+worker/
+runtime/
+logs/
+*.log
+*.jsonl
+
+# Local OS/editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

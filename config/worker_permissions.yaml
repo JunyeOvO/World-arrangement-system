@@ -1,0 +1,247 @@
+# Static Worker Permission Profiles
+# ai-orchestrator-v1 — Phase 4 upgrade
+#
+# Two fixed permission profiles. Ability ≠ Permission.
+# Both workers cannot: push, merge, auto-merge, touch secrets, touch prod destructive.
+# Difference is LLM capability and timeout, not danger level.
+
+version: 1
+
+workers:
+  claude_code:
+    profile: standard_safe
+    description: >
+      Default execution worker for routine coding, docs, tests, simple bugfixes,
+      and normal frontend/backend changes. Uses DeepSeek V4 or MiMo V2.5 — never GLM.
+    provider_allow:
+      - deepseek
+      - mimo
+    provider_deny:
+      - glm
+      - glm-5.2
+      - z_ai
+    model_default: deepseek_pro
+    effort_default: medium
+    timeout_sec: 300
+
+    permissions:
+      read:
+        allow:
+          - "**/*"
+        deny:
+          - ".env"
+          - ".env.*"
+          - "secrets/**"
+          - "keys/**"
+          - "credentials/**"
+          - "**/*.pem"
+          - "**/*.key"
+
+      write:
+        allow:
+          - "src/**"
+          - "app/**"
+          - "backend/**"
+          - "frontend/**"
+          - "android/**"
+          - "tests/**"
+          - "docs/**"
+          - "README.md"
+          - "*.md"
+          - "config/*.example"
+        ask:
+          - "package.json"
+          - "pnpm-lock.yaml"
+          - "package-lock.json"
+          - "yarn.lock"
+          - "requirements.txt"
+          - "pyproject.toml"
+          - "uv.lock"
+          - "Pipfile"
+          - "Pipfile.lock"
+          - ".github/workflows/**"
+          - "Dockerfile"
+          - "docker-compose.yml"
+          - "docker-compose.yaml"
+          - "Makefile"
+          - "CMakeLists.txt"
+        deny:
+          - ".env"
+          - ".env.*"
+          - "secrets/**"
+          - "keys/**"
+          - "credentials/**"
+          - "infra/prod/**"
+          - "deploy/prod/**"
+          - "database/migrations/prod/**"
+          - "**/*.pem"
+          - "**/*.key"
+          - "**/*.p12"
+          - "**/*.pfx"
+          - "**/*.jks"
+          - "**/*.keystore"
+
+      bash:
+        allow:
+          - "git status"
+          - "git diff*"
+          - "git log*"
+          - "git branch*"
+          - "pytest*"
+          - "python -m pytest*"
+          - "npm test*"
+          - "pnpm test*"
+          - "npm run build*"
+          - "pnpm build*"
+          - "./gradlew test*"
+          - "./gradlew testDebugUnitTest*"
+          - "./gradlew build*"
+          - "cargo test*"
+          - "cargo build*"
+          - "go test*"
+          - "go build*"
+          - "make test*"
+          - "make build*"
+        ask:
+          - "npm install*"
+          - "pnpm add*"
+          - "pnpm install*"
+          - "yarn add*"
+          - "pip install*"
+          - "uv add*"
+          - "uv pip install*"
+          - "cargo add*"
+          - "go get*"
+          - "go mod*"
+        deny:
+          - "git push*"
+          - "git merge*"
+          - "gh pr merge*"
+          - "rm -rf /"
+          - "rm -rf /*"
+          - "chmod -R 777 /"
+          - "curl * | sh"
+          - "wget * | sh"
+          - "drop database*"
+          - "truncate*"
+          - "--dangerously-skip-permissions"
+
+  opencode:
+    profile: advanced_code_safe
+    description: >
+      Advanced execution worker for complex coding, large refactors, hard bugfixes,
+      and ClaudeCodeWorker failure escalation. Uses GLM 5.2 via OpenCode.
+      Stronger LLM — NOT more dangerous permissions.
+    model_default: opencode-go/glm-5.2
+    variant_default: high
+    timeout_sec: 600
+
+    permissions:
+      read:
+        allow:
+          - "**/*"
+        deny:
+          - ".env"
+          - ".env.*"
+          - "secrets/**"
+          - "keys/**"
+          - "credentials/**"
+          - "**/*.pem"
+          - "**/*.key"
+
+      write:
+        allow:
+          - "src/**"
+          - "app/**"
+          - "backend/**"
+          - "frontend/**"
+          - "android/**"
+          - "tests/**"
+          - "docs/**"
+          - "README.md"
+          - "*.md"
+          - "config/*.example"
+        ask:
+          - "package.json"
+          - "pnpm-lock.yaml"
+          - "package-lock.json"
+          - "yarn.lock"
+          - "requirements.txt"
+          - "pyproject.toml"
+          - "uv.lock"
+          - "Pipfile"
+          - "Pipfile.lock"
+          - ".github/workflows/**"
+          - "Dockerfile"
+          - "docker-compose.yml"
+          - "docker-compose.yaml"
+          - "Makefile"
+          - "CMakeLists.txt"
+        deny:
+          - ".env"
+          - ".env.*"
+          - "secrets/**"
+          - "keys/**"
+          - "credentials/**"
+          - "infra/prod/**"
+          - "deploy/prod/**"
+          - "database/migrations/prod/**"
+          - "**/*.pem"
+          - "**/*.key"
+          - "**/*.p12"
+          - "**/*.pfx"
+          - "**/*.jks"
+          - "**/*.keystore"
+
+      bash:
+        allow:
+          - "git status"
+          - "git diff*"
+          - "git log*"
+          - "git branch*"
+          - "pytest*"
+          - "python -m pytest*"
+          - "npm test*"
+          - "pnpm test*"
+          - "npm run build*"
+          - "pnpm build*"
+          - "./gradlew test*"
+          - "./gradlew testDebugUnitTest*"
+          - "./gradlew build*"
+          - "cargo test*"
+          - "cargo build*"
+          - "go test*"
+          - "go build*"
+          - "make test*"
+          - "make build*"
+        ask:
+          - "npm install*"
+          - "pnpm add*"
+          - "pnpm install*"
+          - "yarn add*"
+          - "pip install*"
+          - "uv add*"
+          - "uv pip install*"
+          - "cargo add*"
+          - "go get*"
+          - "go mod*"
+        deny:
+          - "git push*"
+          - "git merge*"
+          - "gh pr merge*"
+          - "rm -rf /"
+          - "rm -rf /*"
+          - "chmod -R 777 /"
+          - "curl * | sh"
+          - "wget * | sh"
+          - "drop database*"
+          - "truncate*"
+          - "--dangerously-skip-permissions"
+
+# ── Variant strategy for OpenCodeWorker ──
+# Default: high (no --variant flag)
+# Max only for: hard_bugfix, explicit user request, or high-failure escalation
+#
+# ── Core principle ──
+# OpenCodeWorker LLM is stronger but permissions are NOT more dangerous.
+# Both workers share identical deny lists for secrets, prod infra, and destructive commands.

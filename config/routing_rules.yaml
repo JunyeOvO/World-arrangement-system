@@ -1,0 +1,167 @@
+# Router V2 routing rules
+# Valid agent + LLM combinations:
+# - claude code + deepseek V4 flash
+# - claude code + deepseek V4 pro
+# - claude code + Mimo V2.5
+# - claude code + Mimo V2.5 pro
+# - opencode + GLM 5.2
+# - codex + GPT 5.5
+# Compatibility fields still use worker/model internally.
+version: 2
+
+explicit_model_requests:
+  glm52:
+    keywords:
+      - "glm"
+      - "glm-5.2"
+      - "glm52"
+      - "opencode"
+      - "用glm"
+      - "使用glm"
+      - "用 glm"
+      - "使用 glm"
+      - "use glm"
+      - "using glm"
+    route:
+      worker: opencode
+      model: opencode-go/glm-5.2
+      variant: high
+      intensity: high
+
+multimodal:
+  keywords:
+    - "截图"
+    - "图片"
+    - "image"
+    - "screenshot"
+    - "video"
+    - "音频"
+    - "pdf"
+    - "design"
+    - "设计稿"
+    - "photo"
+    - "照片"
+    - "画面"
+  route:
+    worker: claude_code
+    model: mimo_v25
+    intensity: medium
+
+docs:
+  keywords:
+    - "readme"
+    - "README"
+    - "文档"
+    - "说明"
+    - "注释"
+    - "md"
+    - "markdown"
+  paths:
+    - "README.md"
+    - "docs/**"
+    - "*.md"
+  route:
+    worker: claude_code
+    model: deepseek_pro
+    intensity: medium
+  conflict_resolution:
+    architecture_keyword_in_docs_context: docs
+    auth_keyword_in_docs_context: docs
+    payment_keyword_in_docs_context: docs
+
+complex_coding:
+  task_types:
+    - complex_coding
+    - large_refactor
+    - large_context
+  keywords:
+    - "复杂"
+    - "多文件"
+    - "大规模重构"
+    - "跨模块"
+  route:
+    worker: opencode
+    model: opencode-go/glm-5.2
+    variant: high
+    intensity: high
+
+hard_bugfix:
+  task_types:
+    - hard_bugfix
+  keywords:
+    - "疑难bug"
+    - "很难定位"
+    - "多次失败"
+    - "复杂崩溃"
+    - "race condition"
+  route:
+    worker: opencode
+    model: opencode-go/glm-5.2
+    variant: max
+    intensity: max
+
+high_risk:
+  objects:
+    - auth
+    - payment
+    - database
+    - migration
+    - prod
+    - infra
+  object_keywords:
+    - "auth"
+    - "认证"
+    - "鉴权"
+    - "token"
+    - "session"
+    - "payment"
+    - "支付"
+    - "database"
+    - "数据库"
+    - "migration"
+    - "迁移"
+    - "prod"
+    - "infra"
+    - "deploy"
+    - "部署"
+  high_risk_actions:
+    - modify
+    - refactor
+    - migrate
+    - delete
+    - deploy
+    - 重构
+    - 修改
+    - 迁移
+    - 删除
+    - 部署
+  route:
+    worker: claude_code
+    model: deepseek_pro
+    intensity: high
+    escalation: opencode_on_failure
+
+fallback:
+  route:
+    worker: claude_code
+    model: deepseek_pro
+    intensity: medium
+
+score_weights:
+  explicit_model_request: 100
+  multimodal_required: 80
+  hard_complexity: 70
+  hard_bugfix: 75
+  large_refactor: 70
+  docs_target: 55
+  readme_path: 30
+  test_task: 45
+  simple_bugfix: 40
+  low_cost_preference: 25
+  project_preference: 20
+  history_success_rate: 20
+  architecture_keyword: 20
+  high_risk_object: 25
+  docs_context_penalty_for_opencode: -40
+  cost_penalty_glm52: -20
+  risk_penalty: -50

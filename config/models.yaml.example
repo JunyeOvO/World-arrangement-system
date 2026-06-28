@@ -1,0 +1,110 @@
+# ── Hotpatch: ClaudeCodeWorker only accepts DeepSeek / MiMo, never GLM ──
+# ── GLM-5.2 is only allowed through OpenCodeWorker + opencode-go/glm-5.2 ──
+# ── Hermes: removed, not included ──
+
+models:
+  # ── ClaudeCodeWorker backends (DeepSeek / MiMo only) ──
+
+  deepseek_pro:
+    provider: deepseek
+    adapter: claude_code
+    model: "deepseek-v4-pro[1m]"
+    agent_llm: "claude code + deepseek V4 pro"
+    capability_tiers: ["default", "high", "max"]
+    context_policy: "top"
+    description: "claude code + deepseek V4 pro：默认后端，普通 coding、文档、测试、常规任务"
+    env_profile: "profiles/deepseek_pro.env"
+    worker: "claude_code"
+
+  deepseek_flash:
+    provider: deepseek
+    adapter: claude_code
+    model: "deepseek-v4-flash"
+    agent_llm: "claude code + deepseek V4 flash"
+    capability_tiers: ["default", "high", "max"]
+    context_policy: "top"
+    description: "claude code + deepseek V4 flash：低成本快速子任务后端"
+    env_profile: "profiles/deepseek_flash.env"
+    worker: "claude_code"
+
+  mimo_v25:
+    provider: mimo
+    adapter: claude_code
+    model: "mimo-v2.5"
+    agent_llm: "claude code + Mimo V2.5"
+    capability_tiers: ["default", "high", "max"]
+    context_policy: "top"
+    description: "claude code + Mimo V2.5：多模态、UI/设计稿理解、轻量分析"
+    env_profile: "profiles/mimo_v25.env"
+    worker: "claude_code"
+
+  mimo_v25_pro:
+    provider: mimo
+    adapter: claude_code
+    model: "mimo-v2.5-pro"
+    agent_llm: "claude code + Mimo V2.5 pro"
+    capability_tiers: ["default", "high", "max"]
+    context_policy: "top"
+    description: "claude code + Mimo V2.5 pro：Agent/Coding 与高强度多模态代码任务"
+    env_profile: "profiles/mimo_v25_pro.env"
+    worker: "claude_code"
+
+  mimo_agent:
+    disabled: true
+    reason: "Renamed to mimo_v25_pro. Valid MiMo combinations are Claude Code + MiMo V2.5 and Claude Code + MiMo V2.5 Pro."
+    provider: mimo
+    adapter: claude_code
+    model: "mimo-v2.5-pro"
+    description: "DEPRECATED — use mimo_v25_pro."
+
+  mimo_multimodal:
+    disabled: true
+    reason: "Independent MiMo/API route is disabled. MiMo V2.5 must run through claude code + Mimo V2.5."
+    provider: mimo
+    adapter: api
+    model: "mimo-v2.5"
+    description: "DEPRECATED — use mimo_v25."
+
+  # ── OpenCodeWorker backend (GLM-5.2 only) ──
+
+  opencode_go_glm52:
+    provider: opencode_go
+    adapter: opencode_cli
+    model: "opencode-go/glm-5.2"
+    agent_llm: "opencode + GLM 5.2"
+    capability_tiers: ["default", "high", "max"]
+    context_policy: "top"
+    description: "opencode + GLM 5.2：复杂编码、hard bugfix 与升级路线"
+    worker: "opencode"
+    # default_variant: opencode CLI 只接受 high|max|minimal；写 "default" 等同省略 --variant（save quota）。
+    default_variant: "high"
+
+  # ── Codex Review ──
+
+  codex_reviewer:
+    provider: openai
+    adapter: codex_exec
+    model: "gpt-5.5"
+    agent_llm: "codex + GPT 5.5"
+    capability_tiers: ["default", "high", "max"]
+    context_policy: "top"
+    description: "codex + GPT 5.5：最终审查、高难问题兜底"
+    worker: "codex_review"
+
+  # ── LEGACY / DISABLED (Hotpatch: GLM is no longer allowed through ClaudeCodeWorker) ──
+
+  glm_advanced:
+    disabled: true
+    reason: "GLM is only allowed through OpenCodeWorker + opencode-go/glm-5.2. ClaudeCodeWorker no longer routes to GLM."
+    provider: z_ai
+    adapter: claude_code
+    model: "glm-5.2[1m]"
+    description: "DEPRECATED — do not use. Use opencode_go_glm52 instead."
+
+  glm_routine:
+    disabled: true
+    reason: "GLM is only allowed through OpenCodeWorker + opencode-go/glm-5.2. ClaudeCodeWorker no longer routes to GLM."
+    provider: z_ai
+    adapter: claude_code
+    model: "glm-4.7"
+    description: "DEPRECATED — do not use."

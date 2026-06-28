@@ -1,0 +1,73 @@
+projects:
+  generic:
+    project_id: "generic"
+    name: "Generic Project"
+    repo: "/home/junye/repos/generic"
+    default_branch: "main"
+    pr_base_branch: "main"
+    stack: ["python", "node"]
+    test_commands:
+      - "python -m pytest -q"
+    build_commands: []
+    allowed_paths:
+      - "**"
+    forbidden_paths:
+      - ".env"
+      - ".env.*"
+      - "secrets/**"
+      - "keys/**"
+    default_worker: "claude_code"
+    default_model: "deepseek_pro"
+    # default_variant: "default" 等同于省略 --variant flag（save quota / 保守首尝试）。
+    default_variant: "default"
+    allow_auto_pr: false
+    allow_remote_push: false
+
+  shiwu:
+    project_id: "shiwu"
+    name: "拾物 RAG 电商导购"
+    repo: "/home/junye/repos/shiwu"
+    default_branch: "main"
+    pr_base_branch: "main"
+    stack: ["android", "kotlin", "fastapi", "qdrant", "postgresql"]
+    test_commands:
+      - "cd backend && pytest -q"
+      - "cd android && ./gradlew testDebugUnitTest"
+    build_commands:
+      - "cd backend && python -m compileall app"
+    forbidden_paths:
+      - ".env"
+      - ".env.*"
+      - "secrets/**"
+      - "infra/prod/**"
+      - "database/migrations/prod/**"
+    default_worker: "opencode"
+    default_model: "opencode_go_glm52"
+    # default_variant: "default" 等同于省略 --variant flag（save quota / 保守首尝试）。
+    default_variant: "default"
+    allow_auto_pr: true
+    allow_remote_push: false
+
+  travel_with_me:
+    project_id: "travel_with_me"
+    name: "Travel With Me"
+    repo: "/home/junye/repos/travel-with-me"
+    default_branch: "main"
+    pr_base_branch: "main"
+    stack: ["vue", "react", "fastapi", "amap", "threejs"]
+    test_commands:
+      - "pnpm test"
+      - "pnpm build"
+      - "cd backend && pytest -q"
+    build_commands:
+      - "pnpm build"
+    forbidden_paths:
+      - ".env"
+      - ".env.*"
+      - "deploy/prod/**"
+      - "secrets/**"
+    default_worker: "claude_code"
+    default_model: "deepseek_pro"
+    # GLM-5.2 escalation is handled by World Router through OpenCodeWorker.
+    allow_auto_pr: true
+    allow_remote_push: false

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Result",
+  "type": "object",
+  "required": ["task_id", "status", "model_used", "changed_files", "summary", "tests_run", "tests_passed", "diff_path", "needs_user"],
+  "properties": {
+    "task_id": { "type": "string" },
+    "status": { "type": "string", "enum": ["success", "failed", "partial"] },
+    "model_used": { "type": "string" },
+    "changed_files": { "type": "array", "items": { "type": "string" } },
+    "summary": { "type": "string" },
+    "tests_run": { "type": "array", "items": { "type": "string" } },
+    "tests_passed": { "type": "boolean" },
+    "logs": { "type": "array", "items": { "type": "string" } },
+    "diff_path": { "type": "string" },
+    "pr_url": { "type": ["string", "null"] },
+    "needs_user": { "type": "boolean" }
+  }
+}
+

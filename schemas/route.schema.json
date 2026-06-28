@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Route",
+  "type": "object",
+  "required": ["selected_model", "selected_worker", "reason", "fallback_models", "max_retries", "escalation_policy"],
+  "properties": {
+    "selected_model": { "type": "string" },
+    "selected_worker": { "type": "string" },
+    "selected_llm": { "type": "string" },
+    "selected_agent": { "type": "string" },
+    "agent_llm": { "type": "string" },
+    "capability_tier": { "type": "string", "enum": ["default", "high", "max"] },
+    "capability_profile": { "type": "object" },
+    "reason": { "type": "string" },
+    "fallback_models": { "type": "array", "items": { "type": "string" } },
+    "max_retries": { "type": "integer", "minimum": 0 },
+    "escalation_policy": { "type": "string" }
+  }
+}

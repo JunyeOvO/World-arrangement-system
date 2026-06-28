@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Review",
+  "type": "object",
+  "required": ["approved", "risk_level", "blocking_issues", "non_blocking_issues", "required_changes", "final_recommendation", "can_create_pr"],
+  "properties": {
+    "approved": { "type": "boolean" },
+    "risk_level": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+    "blocking_issues": { "type": "array", "items": { "type": "string" } },
+    "non_blocking_issues": { "type": "array", "items": { "type": "string" } },
+    "required_changes": { "type": "array", "items": { "type": "string" } },
+    "final_recommendation": { "type": "string" },
+    "can_create_pr": { "type": "boolean" }
+  }
+}
+

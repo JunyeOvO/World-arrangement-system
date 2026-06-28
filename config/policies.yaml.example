@@ -1,0 +1,128 @@
+# ── Valid Agent + LLM combinations ──
+# claude code + deepseek V4 flash
+# claude code + deepseek V4 pro
+# claude code + Mimo V2.5
+# claude code + Mimo V2.5 pro
+# opencode + GLM 5.2
+# codex + GPT 5.5
+
+execution_preferences:
+  default_worker: "claude_code"
+  prefer_claude_code: true
+  prefer_opencode_go: false
+  opencode_only_for_glm52: true
+  claude_code_allowed_providers:
+    - deepseek
+    - mimo
+  claude_code_forbid_providers:
+    - z_ai
+    - glm
+    - glm-5.2
+
+model_routing:
+  docs:
+    worker: "claude_code"
+    model: "deepseek_pro"
+
+  simple_bugfix:
+    worker: "claude_code"
+    model: "deepseek_pro"
+
+  test_generation:
+    worker: "claude_code"
+    model: "deepseek_pro"
+
+  routine_coding:
+    worker: "claude_code"
+    model: "deepseek_pro"
+
+  multimodal:
+    worker: "claude_code"
+    model: "mimo_v25"
+
+  mimo_agent_coding:
+    worker: "claude_code"
+    model: "mimo_v25_pro"
+
+  explicit_glm52:
+    worker: "opencode"
+    model: "opencode_go_glm52"
+    variant: "high"
+
+  complex_coding:
+    worker: "opencode"
+    model: "opencode_go_glm52"
+    variant: "high"
+
+  hard_bugfix:
+    worker: "opencode"
+    model: "opencode_go_glm52"
+    variant: "max"
+
+  final_review:
+    worker: "codex_review"
+    model: "codex_reviewer"
+    reasoning_effort: "high"
+
+risk_policy:
+  low:
+    auto_execute: true
+    auto_pr: true
+    auto_merge: false
+    max_retries: 2
+    allowed_models: ["deepseek_pro", "deepseek_flash", "mimo_v25", "mimo_v25_pro"]
+
+  medium:
+    auto_execute: true
+    auto_pr: true
+    auto_merge: false
+    max_retries: 2
+    allowed_models: ["deepseek_pro", "mimo_v25", "mimo_v25_pro", "opencode_go_glm52"]
+
+  high:
+    auto_execute: true
+    auto_pr: false
+    auto_merge: false
+    require_codex_review: true
+    max_retries: 1
+    allowed_models: ["deepseek_pro", "mimo_v25", "mimo_v25_pro", "opencode_go_glm52", "codex_reviewer"]
+
+forbidden_paths:
+  - ".env"
+  - ".env.*"
+  - "secrets/**"
+  - "keys/**"
+  - "credentials/**"
+  - "infra/prod/**"
+  - "deploy/prod/**"
+  - "database/migrations/prod/**"
+  - "*.pem"
+  - "*.key"
+
+forbidden_actions:
+  - "rm -rf /"
+  - "git push --force"
+  - "drop database"
+  - "truncate"
+  - "delete production"
+  - "chmod -R 777 /"
+  - "curl | sh"
+
+retry_policy:
+  max_worker_retries: 2
+  escalate_after_failures: 2
+  escalate_to_opencode_glm52: true
+
+pr_policy:
+  create_pr_when_tests_pass: true
+  auto_merge: false
+  require_codex_review: true
+
+sandbox_policy:
+  require_git_repo: true
+  use_worktree: true
+  preserve_artifacts: true
+  timeout_seconds:
+    worker: 1800
+    test: 1200
+    build: 1200

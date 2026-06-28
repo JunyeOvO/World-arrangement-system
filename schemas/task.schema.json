@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Task",
+  "type": "object",
+  "required": ["task_id", "project_id", "repo_path", "user_goal", "risk_level", "auto_execute", "auto_pr", "auto_merge", "status"],
+  "properties": {
+    "task_id": { "type": "string" },
+    "project_id": { "type": "string" },
+    "repo_path": { "type": "string" },
+    "user_goal": { "type": "string" },
+    "risk_level": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+    "allowed_paths": { "type": "array", "items": { "type": "string" } },
+    "forbidden_paths": { "type": "array", "items": { "type": "string" } },
+    "acceptance": { "type": "array", "items": { "type": "string" } },
+    "auto_execute": { "type": "boolean" },
+    "auto_pr": { "type": "boolean" },
+    "auto_merge": { "type": "boolean", "const": false },
+    "status": { "type": "string" },
+    "created_at": { "type": "string" },
+    "updated_at": { "type": "string" }
+  }
+}
+
