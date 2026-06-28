@@ -164,4 +164,4 @@ def test_scheduler_writes_vision_observation_artifact(tmp_path, monkeypatch):
     assert observation["task_id"] == result["task_id"]
     assert observation["image_refs"][0]["mime_type"] == "image/png"
     assert task["vision_observation"]["observations"]
-    assert service.get_task_status(result["task_id"])["status"] == "COMPLETED_WITH_PATCH"
+    assert service.get_task_status(result["task_id"])["status"] == "DRY_RUN_COMPLETED"

@@ -28,6 +28,9 @@ def test_world_bootstrap_zero_write_keeps_repo_clean(tmp_path, monkeypatch):
     assert result["world_enabled"] is True
     assert result["write_policy"] == "zero_write"
     assert result["runtime_backend"] == "external-global"
+    assert result["project_id"] is None
+    assert result["runtime_id"]
+    assert result["detect"]["health"]["status"] == "unknown"
     assert Path(result["project_profile_path"]).exists()
     assert not (repo / ".world").exists()
     status = subprocess.run(["git", "status", "--short"], cwd=repo, text=True, capture_output=True, check=True)
@@ -94,4 +97,42 @@ def test_world_enabled_submit_task_uses_world_plan_route(tmp_path, monkeypatch):
     plan_payload = yaml.safe_load(world_plan.read_text(encoding="utf-8"))
     assert route_payload == plan_payload["route"]
     assert route_payload["selected_worker"] == "claude_code"
+    assert service.get_task_status(result["task_id"])["status"] == "DRY_RUN_COMPLETED"
     assert not (repo / ".world").exists()
+
+
+def test_detect_project_reports_stale_registration_health(tmp_path, monkeypatch):
+    runtime = tmp_path / "ai-runtime"
+    runtime.mkdir()
+    monkeypatch.setenv("AI_ORCHESTRATOR_HOME", str(runtime))
+    missing_repo = tmp_path / "missing"
+    requested_repo = tmp_path / "demo"
+    requested_repo.mkdir()
+    (runtime / "projects.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "demo": {
+                        "project_id": "demo",
+                        "name": "Demo",
+                        "repo": str(missing_repo),
+                        "allow_auto_pr": True,
+                        "test_commands": [],
+                        "build_commands": [],
+                    }
+                }
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    service = OrchestratorService()
+    result = service.detect_project(repo_path=str(requested_repo), git_remote_url="")
+
+    assert result["project_id"] == "demo"
+    assert result["matched_by"] == "fuzzy_name"
+    assert result["health"]["status"] == "needs_fix"
+    assert any("does not exist" in issue for issue in result["health"]["issues"])
+    assert any("allow_auto_pr" in issue for issue in result["health"]["issues"])

@@ -47,7 +47,10 @@ def test_claude_code_worker_accepts_deepseek():
         _dummy_route(model="deepseek_pro", worker="claude_code"),
         _dummy_task(), dry_run=True,
     )
-    assert result.status == "success"  # dry-run mock success
+    assert result.status == "success"
+    assert result.mock_result is True
+    assert result.degraded is True
+    assert result.summary.startswith("DEGRADED_MOCK_RESULT")
 
 
 def test_claude_worker_accepts_retry_attempt_model_key():
@@ -60,6 +63,7 @@ def test_claude_worker_accepts_retry_attempt_model_key():
 
     assert result.status == "success"
     assert any("deepseek_flash.env" in risk for risk in result.risks)
+    assert result.mock_result is True
 
 
 def test_claude_code_worker_accepts_mimo_v25():
@@ -71,6 +75,7 @@ def test_claude_code_worker_accepts_mimo_v25():
         _dummy_task(), dry_run=True,
     )
     assert result.status == "success"
+    assert result.mock_result is True
 
 
 def test_claude_code_worker_accepts_mimo_v25_pro():
@@ -82,10 +87,11 @@ def test_claude_code_worker_accepts_mimo_v25_pro():
         _dummy_task(), dry_run=True,
     )
     assert result.status == "success"
+    assert result.mock_result is True
 
 
 def test_opencode_worker_dry_run():
-    """Hotpatch: OpenCodeWorker dry-run should return mock success."""
+    """Hotpatch: OpenCodeWorker dry-run should return an explicit mock result."""
     worker = OpenCodeWorker()
     result = worker.run(
         "use GLM-5.2 to fix code", Path("."),
@@ -93,6 +99,9 @@ def test_opencode_worker_dry_run():
         _dummy_task(), dry_run=True,
     )
     assert result.status == "success"
+    assert result.mock_result is True
+    assert result.degraded is True
+    assert result.summary.startswith("DEGRADED_MOCK_RESULT")
 
 
 def test_opencode_worker_accepts_retry_attempt_model_key(tmp_path):

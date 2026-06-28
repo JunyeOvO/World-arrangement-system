@@ -18,6 +18,8 @@ STATE_ALIASES: dict[str, str] = {
     "READY_TO_PUBLISH": "PLANNED",
     "COMPLETED": "DONE",
     "COMPLETED_WITH_PATCH": "DONE_WITH_BLOCK",
+    "COMPLETED_NO_CHANGES": "DONE",
+    "DRY_RUN_COMPLETED": "DONE",
 }
 
 # ── Reverse map: new → list of old names ──
@@ -105,6 +107,8 @@ def _build_old_transitions() -> dict[str, set[str]]:
     old_map.setdefault("PUBLISHING", {"PR_CREATED", "COMPLETED_WITH_PATCH", "FAILED_FINAL"})
     old_map.setdefault("COMPLETED", set())
     old_map.setdefault("COMPLETED_WITH_PATCH", set())
+    old_map.setdefault("COMPLETED_NO_CHANGES", set())
+    old_map.setdefault("DRY_RUN_COMPLETED", set())
     return old_map
 
 
@@ -118,6 +122,8 @@ _TRANSITIONS_MERGED.update(TRANSITIONS)
 # Include old terminal states
 _TRANSITIONS_MERGED["COMPLETED"] = frozenset()
 _TRANSITIONS_MERGED["COMPLETED_WITH_PATCH"] = frozenset()
+_TRANSITIONS_MERGED["COMPLETED_NO_CHANGES"] = frozenset()
+_TRANSITIONS_MERGED["DRY_RUN_COMPLETED"] = frozenset()
 _TRANSITIONS_MERGED["PUBLISHING"] = {"PR_CREATED", "COMPLETED_WITH_PATCH", "FAILED_FINAL"}
 
 
@@ -139,4 +145,3 @@ def apply_event(current: TaskState, to_state: str) -> TaskState:
     if not can_transition(current.status, to_state):
         raise InvalidTransitionError(f"illegal transition: {current.status} -> {to_state}")
     return TaskState(task_id=current.task_id, status=to_state)
-

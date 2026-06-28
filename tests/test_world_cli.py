@@ -27,6 +27,8 @@ def test_world_bootstrap_cli_outputs_json(tmp_path, monkeypatch, capsys):
     assert code == 0
     assert output["world_enabled"] is True
     assert output["write_policy"] == "zero_write"
+    assert output["project_id"] is None
+    assert output["runtime_id"]
     assert Path(output["project_profile_path"]).exists()
     assert not (repo / ".world").exists()
 

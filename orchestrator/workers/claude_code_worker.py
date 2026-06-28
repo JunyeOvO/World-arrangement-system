@@ -9,7 +9,7 @@ from .base import Worker, WorkerResult
 from .git_diff import detect_changed_files, export_patch, validate_file_ownership
 from ..command_utils import build_command, command_available, subprocess_cwd, subprocess_env
 from ..constants import DEFAULT_CLAUDE_CMD
-from ..env_profiles import env_for_model, redacted_env_keys
+from ..env_profiles import env_for_model
 from ..llm_capability import capability_profile, env_for_capability
 from ..permissions import check_provider, check_worker_launch_command
 from ..process_control import run_managed_process
@@ -234,21 +234,24 @@ class ClaudeCodeWorker(Worker):
         if dry_run or not available:
             stdout_path.write_text(json.dumps({"event": "mock", "worker": self.name}) + "\n", encoding="utf-8")
             stderr_path.write_text("", encoding="utf-8")
+            reason = "dry-run requested" if dry_run else f"Claude Code CLI unavailable: {claude_cmd}"
             return WorkerResult(
                 "success",
-                "mock Claude Code worker completed without editing files",
+                "DEGRADED_MOCK_RESULT: Claude Code worker did not run real analysis or edits",
                 [],
                 task.get("test_commands", []),
                 [
-                    f"dry-run or Claude Code CLI unavailable: {claude_cmd}",
+                    reason,
                     f"env_profile={profile_path}",
                     f"capability_tier={llm_profile.get('tier')}",
                     f"context_policy={llm_profile.get('context_policy')}",
-                    f"env_keys={redacted_env_keys(profile_env)}",
                 ],
                 False,
                 str(stdout_path),
                 str(stderr_path),
+                degraded=True,
+                degradation_reason=reason,
+                mock_result=True,
             )
         args = [
             "-p",
@@ -331,7 +334,7 @@ class ClaudeCodeWorker(Worker):
             task,
         )
         risks = (
-            [f"env_profile={profile_path}", f"env_keys={redacted_env_keys(profile_env)}"]
+            [f"env_profile={profile_path}"]
             if success
             else [
                 proc.stderr_tail[-500:],

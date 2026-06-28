@@ -88,13 +88,14 @@ class OpenCodeWorker(Worker):
         if dry_run or not available:
             stdout_path.write_text(json.dumps({"event": "mock", "worker": self.name}) + "\n", encoding="utf-8")
             stderr_path.write_text("", encoding="utf-8")
+            reason = "dry-run requested" if dry_run else f"OpenCode CLI unavailable: {opencode_cmd}"
             return WorkerResult(
                 "success",
-                "mock OpenCode worker completed without editing files",
+                "DEGRADED_MOCK_RESULT: OpenCode worker did not run real analysis or edits",
                 [],
                 task.get("test_commands", []),
                 [
-                    f"dry-run or OpenCode CLI unavailable: {opencode_cmd}",
+                    reason,
                     "api_route=opencode_cli_direct",
                     f"capability_tier={llm_profile.get('tier')}",
                     f"context_policy={llm_profile.get('context_policy')}",
@@ -105,6 +106,9 @@ class OpenCodeWorker(Worker):
                 patch_file=None,
                 tests_run=[],
                 rollback_notes="dry_run: no changes to rollback",
+                degraded=True,
+                degradation_reason=reason,
+                mock_result=True,
             )
         task_id = str(task.get("task_id", ""))
         args = [

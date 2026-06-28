@@ -65,7 +65,7 @@ def test_codex_available_uses_codex_review_mode(tmp_path, monkeypatch):
     assert review["can_create_pr"] is True
 
 
-def test_scheduler_medium_degraded_review_needs_user_not_publish(tmp_path, monkeypatch):
+def test_scheduler_medium_dry_run_degraded_mock_does_not_publish(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
@@ -95,29 +95,14 @@ def test_scheduler_medium_degraded_review_needs_user_not_publish(tmp_path, monke
     )
     monkeypatch.setenv("AI_ORCHESTRATOR_HOME", str(home))
     monkeypatch.setattr("orchestrator.scheduler._task_requires_diff", lambda task: False)
-    monkeypatch.setattr("orchestrator.scheduler.run_codex_review", lambda inputs, output_path: (
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True),
-        Path(output_path).write_text(json.dumps({
-            "approved": False,
-            "review_mode": "local_fallback",
-            "degraded": True,
-            "degradation_reason": "codex CLI not found",
-            "available": False,
-            "can_create_pr": False,
-            "blocking_issues": [],
-            "non_blocking_issues": ["codex CLI not found"],
-            "required_changes": ["Codex review must be available for medium+ risk tasks"],
-        }), encoding="utf-8"),
-        json.loads(Path(output_path).read_text(encoding="utf-8")),
-    )[2])
-
     service = OrchestratorService()
     result = service.submit_task("generic", "analyze repository", "medium", True, False, dry_run=True)
     status = service.get_task_status(result["task_id"])
     final_md = (Path(result["run_dir"]) / "final.md").read_text(encoding="utf-8")
 
-    assert status["status"] == "NEEDS_USER"
-    assert any(event["event_type"] == "review_degraded_needs_user" for event in status["events"])
-    assert "Mode: local_fallback" in final_md
+    assert status["status"] == "DRY_RUN_COMPLETED"
+    assert any(event["event_type"] == "dry_run_completed" for event in status["events"])
+    assert "degraded_mock_result" in final_md
+    assert "Mode: degraded_mock" in final_md
     assert "Degraded: True" in final_md
     assert not (Path(result["run_dir"]) / "publish.json").exists()

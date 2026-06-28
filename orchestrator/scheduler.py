@@ -78,12 +78,14 @@ class OrchestratorService:
 
     def detect_project(self, repo_path: str | None = None, git_remote_url: str | None = None, cwd: str | None = None) -> dict[str, Any]:
         match = detect_project(repo_path=repo_path, git_remote_url=git_remote_url, cwd=cwd)
+        health = _project_registration_health(match.project, repo_path or cwd)
         return {
             "project_id": match.project_id,
             "confidence": match.confidence,
             "matched_by": match.matched_by,
             "needs_user": match.needs_user,
             "project": match.project,
+            "health": health,
         }
 
     # ── World vNext lightweight tools ──
@@ -97,8 +99,11 @@ class OrchestratorService:
         """Bootstrap World for a repo without writing World core files into it."""
         store = RuntimeStore(repo_path, preferred_write_policy)  # type: ignore[arg-type]
         profile = self.profile_project(repo_path, force=False)
+        detected = self.detect_project(repo_path=repo_path)
+        orchestrator_project_id = detected.get("project_id")
         profile_payload = {
-            "project_id": store.project_id,
+            "project_id": orchestrator_project_id,
+            "runtime_id": store.project_id,
             "repo_path": str(Path(repo_path).expanduser().resolve()),
             "user_prompt": user_prompt,
             "profile": profile,
@@ -111,7 +116,9 @@ class OrchestratorService:
             "write_policy": preferred_write_policy,
             "runtime_backend": store.backend,
             "runtime_store": str(store.project_dir),
-            "project_id": store.project_id,
+            "project_id": orchestrator_project_id,
+            "runtime_id": store.project_id,
+            "detect": detected,
             "project_profile_path": str(profile_path),
             "next_tool": "world_profile_project",
         }
@@ -729,6 +736,45 @@ class OrchestratorService:
             self._record_policy_learning(task, project, success=False, worker=retry_chain[-1]["worker"], model=retry_chain[-1]["model"], rollback=True)
             return
 
+        if _worker_result_is_degraded_mock(final_result):
+            verify_result = _dry_verify(task)
+            write_verify_result(verify_result, Path(task["run_dir"]) / "verify" / "verify.json")
+            self.artifacts.write_json(task_id, "verify/changed_files.json", verify_result.changed_files)
+            review = _degraded_mock_review(task, final_result, dry_run=dry_run)
+            self.artifacts.write_json(task_id, "review/review.json", review)
+            self.artifacts.write_text(
+                task_id,
+                "final.md",
+                _final_md(task, route, final_result.__dict__, verify_result.to_dict(), review),
+            )
+            if last_attempt:
+                failure = classify_review_failure({**review, "available": False})
+                self._write_attempt_metrics(
+                    task_id,
+                    int(last_attempt.get("attempt_no", 1)),
+                    last_attempt,
+                    final_result,
+                    failure,
+                    build_passed=verify_result.build_passed,
+                    review_approved=False,
+                )
+            if dry_run:
+                self._set_status(
+                    task_id,
+                    "DRY_RUN_COMPLETED",
+                    "dry_run_completed",
+                    {"worker": final_result.__dict__, "review": review},
+                )
+            else:
+                self._set_status(
+                    task_id,
+                    "NEEDS_USER",
+                    "worker_degraded_mock_needs_user",
+                    {"worker": final_result.__dict__, "review": review},
+                )
+            self._record_policy_learning(task, project, success=False, worker=route["selected_worker"], model=route["selected_model"])
+            return
+
         # ── Verify ──
         self._set_status(task_id, "VERIFYING", "verify_started", {})
         test_commands = list(task.get("test_commands", []))
@@ -852,6 +898,8 @@ class OrchestratorService:
                                          model=route["selected_model"], pr_created=True)
         elif publish_result.status == "COMPLETED_WITH_PATCH":
             self._set_status(task_id, "COMPLETED_WITH_PATCH", "completed_with_patch", publish_result.__dict__)
+        elif publish_result.status == "COMPLETED_NO_CHANGES":
+            self._set_status(task_id, "COMPLETED_NO_CHANGES", "completed_no_changes", publish_result.__dict__)
         else:
             self._set_status(task_id, "DONE", "completed_without_publish", publish_result.__dict__)
 
@@ -1003,6 +1051,60 @@ def _review_degraded_blocks_publish(task: dict[str, Any], review: dict[str, Any]
     if not review.get("degraded"):
         return False
     return str(task.get("risk_level", "medium")).lower() in {"medium", "high", "max"}
+
+
+def _project_registration_health(project: dict[str, Any] | None, requested_repo_path: str | None = None) -> dict[str, Any]:
+    if not project:
+        return {"status": "unknown", "issues": ["project is not registered"], "warnings": []}
+    issues: list[str] = []
+    warnings: list[str] = []
+    repo_raw = str(project.get("repo") or "")
+    repo_path = Path(repo_raw).expanduser() if repo_raw else None
+    if not repo_raw:
+        issues.append("registered project has no repo path")
+    elif not repo_path.exists():
+        issues.append(f"registered repo path does not exist: {repo_raw}")
+    requested = Path(requested_repo_path).expanduser().resolve() if requested_repo_path else None
+    if requested and repo_path and repo_path.exists():
+        try:
+            if repo_path.resolve() != requested:
+                issues.append(f"registered repo path differs from requested path: {repo_raw}")
+        except OSError:
+            issues.append(f"registered repo path cannot be resolved: {repo_raw}")
+    if project.get("allow_auto_pr") is True:
+        issues.append("allow_auto_pr is enabled; World deployment policy expects false unless explicitly approved")
+    for key in ("test_commands", "build_commands"):
+        value = project.get(key)
+        if value is not None and not isinstance(value, list):
+            issues.append(f"{key} must be a list")
+        elif value == []:
+            warnings.append(f"{key} is empty")
+    return {
+        "status": "needs_fix" if issues else "ok",
+        "issues": issues,
+        "warnings": warnings,
+    }
+
+
+def _worker_result_is_degraded_mock(result: Any) -> bool:
+    return bool(getattr(result, "mock_result", False) or getattr(result, "degraded", False))
+
+
+def _degraded_mock_review(task: dict[str, Any], worker_result: Any, dry_run: bool) -> dict[str, Any]:
+    reason = getattr(worker_result, "degradation_reason", None) or "worker returned a mock result"
+    return {
+        "approved": False,
+        "review_mode": "degraded_mock",
+        "degraded": True,
+        "degradation_reason": reason,
+        "available": False,
+        "risk_level": task.get("risk_level", "medium"),
+        "blocking_issues": ["real worker execution was not available"],
+        "non_blocking_issues": ["dry-run only; no real project analysis was performed"] if dry_run else [],
+        "required_changes": ["run the task with an available real worker before treating this as analysis"],
+        "final_recommendation": "degraded mock result; do not create PR",
+        "can_create_pr": False,
+    }
 
 
 def _read_json_if_exists(path: Path) -> dict[str, Any] | None:
@@ -1333,6 +1435,19 @@ def _dry_verify(task: dict[str, Any]):
 
 
 def _final_md(task: dict[str, Any], route: dict[str, Any], worker: dict[str, Any], verify_result: dict[str, Any], review: dict[str, Any]) -> str:
+    status_line = "degraded_mock_result" if worker.get("mock_result") or worker.get("degraded") else "completed"
+    review_verdict = "not approved for publish" if review.get("degraded") else ("approved" if review.get("approved") else "not approved")
+    degraded_note = ""
+    if review.get("degraded") or worker.get("degraded"):
+        degraded_note = f"""
+## Degraded Result
+
+This result is not a real worker audit or implementation.
+
+- Reason: {review.get('degradation_reason') or worker.get('degradation_reason')}
+- Review verdict: {review_verdict}
+- Publish allowed: false
+"""
     return f"""# Task Result
 
 ## Summary
@@ -1341,7 +1456,8 @@ def _final_md(task: dict[str, Any], route: dict[str, Any], worker: dict[str, Any
 - Project: {task['project_id']}
 - Worker: {route['selected_worker']}
 - Model: {route['selected_model']}
-- Status: completed
+- Status: {status_line}
+{degraded_note}
 
 ## Worker
 
@@ -1357,8 +1473,8 @@ def _final_md(task: dict[str, Any], route: dict[str, Any], worker: dict[str, Any
 - Mode: {review.get('review_mode', 'unknown')}
 - Degraded: {review.get('degraded', False)}
 - Degradation reason: {review.get('degradation_reason')}
-- Approved: {review.get('approved')}
-- Can create PR: {review.get('can_create_pr')}
+- Verdict: {review_verdict}
+- Publish allowed: {bool(review.get('can_create_pr'))}
 
 ## Safety
 

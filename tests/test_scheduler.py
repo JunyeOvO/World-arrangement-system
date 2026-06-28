@@ -279,14 +279,20 @@ def test_scheduler_writes_verify_and_metrics_artifacts(tmp_path, monkeypatch):
     result = service.submit_task("generic", "analyze repository", "low", True, False, dry_run=True)
     run_dir = Path(result["run_dir"])
 
-    assert service.get_task_status(result["task_id"])["status"] == "COMPLETED_WITH_PATCH"
+    assert service.get_task_status(result["task_id"])["status"] == "DRY_RUN_COMPLETED"
     verify_payload = json.loads((run_dir / "verify" / "verify.json").read_text(encoding="utf-8"))
+    review_payload = json.loads((run_dir / "review" / "review.json").read_text(encoding="utf-8"))
+    final_md = (run_dir / "final.md").read_text(encoding="utf-8")
     metrics_payload = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
     db_metrics = service.db.list_task_metrics(result["task_id"])
 
     assert verify_payload["tests_passed"] is True
     assert verify_payload["build_passed"] is True
     assert verify_payload["forbidden_allowed"] is True
+    assert review_payload["review_mode"] == "degraded_mock"
+    assert review_payload["approved"] is False
+    assert review_payload["can_create_pr"] is False
+    assert "degraded_mock_result" in final_md
     assert metrics_payload["task_id"] == result["task_id"]
     assert db_metrics[0]["model"] == "deepseek_pro"
 

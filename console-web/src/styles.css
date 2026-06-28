@@ -181,6 +181,8 @@ small {
 .status.done,
 .status.completed,
 .status.completed_with_patch,
+.status.completed_no_changes,
+.status.dry_run_completed,
 .status.worker_succeeded {
   color: #166534;
   background: #eaf7ee;

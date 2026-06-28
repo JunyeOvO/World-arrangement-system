@@ -18,6 +18,9 @@ class WorkerResult:
     patch_file: str | None = None
     tests_run: list[dict] = field(default_factory=list)
     rollback_notes: str | None = None
+    degraded: bool = False
+    degradation_reason: str | None = None
+    mock_result: bool = False
 
 
 class Worker:
@@ -25,4 +28,3 @@ class Worker:
 
     def run(self, prompt: str, worktree: Path, route: dict, task: dict, dry_run: bool = False) -> WorkerResult:
         raise NotImplementedError
-
