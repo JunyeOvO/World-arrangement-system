@@ -28,6 +28,7 @@ def test_old_state_aliases_resolve():
     assert resolve_state("REVIEWING") == "CODEX_REVIEWING"
     assert resolve_state("COMPLETED") == "DONE"
     assert resolve_state("COMPLETED_NO_CHANGES") == "DONE"
+    assert resolve_state("COMPLETED_WITH_ARTIFACTS") == "DONE"
     assert resolve_state("DRY_RUN_COMPLETED") == "DONE"
 
 
@@ -56,6 +57,12 @@ def test_new_approval_flow_transitions():
     ]
     for i in range(len(flow) - 1):
         assert can_transition(flow[i], flow[i + 1]), f"transition {flow[i]} -> {flow[i + 1]} should be valid"
+
+
+def test_review_unavailable_can_pause_for_human_review():
+    assert can_transition("CODEX_REVIEWING", "NEEDS_REVIEW")
+    assert can_transition("NEEDS_REVIEW", "PLANNED")
+    assert can_transition("NEEDS_REVIEW", "CANCELLED")
 
 
 def test_blocked_state():

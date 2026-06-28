@@ -5,6 +5,7 @@ import os
 import signal
 import subprocess
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -300,9 +301,22 @@ def _process_payload(
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    last_error: OSError | None = None
+    for attempt in range(5):
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        try:
+            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(path)
+            return
+        except OSError as exc:
+            last_error = exc
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            time.sleep(0.05 * (attempt + 1))
+    if last_error is not None:
+        raise last_error
 
 
 def _read_json(path: Path) -> dict[str, Any]:

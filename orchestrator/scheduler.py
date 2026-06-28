@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -277,6 +279,8 @@ class OrchestratorService:
         task = self.db.get_task(task_id)
         if not task:
             return {"status": "NOT_FOUND", "task_id": task_id}
+        self._reap_stale_worker_task(task)
+        task = self.db.get_task(task_id) or task
         events = self.db.list_events(task_id)
         return {**task, "events": events[-10:]}
 
@@ -284,6 +288,8 @@ class OrchestratorService:
         task = self.db.get_task(task_id)
         if not task:
             return {"status": "NOT_FOUND", "task_id": task_id}
+        self._reap_stale_worker_task(task)
+        task = self.db.get_task(task_id) or task
         index = self.artifacts.index(task_id)
         result: dict[str, Any] = {"task": task, "artifacts": index}
         for key in ["final.md", "review/review.json", "verify/verify.json", "verify/diff.patch", "metrics.json", "multimodal/vision_observation.json", "result.json"]:
@@ -303,6 +309,8 @@ class OrchestratorService:
         task = self.db.get_task(task_id)
         if not task:
             return {"status": "NOT_FOUND", "task_id": task_id}
+        self._reap_stale_worker_task(task)
+        task = self.db.get_task(task_id) or task
         control_dir = Path(task["run_dir"]) / "control"
         return {
             "task_id": task_id,
@@ -586,7 +594,28 @@ class OrchestratorService:
 
             prompt = _worker_prompt(task, {"selected_model": attempt["model"], "selected_worker": attempt["worker"]})
             task_for_worker = {**task, "task_id": task_id}
-            worker_result = worker.run(prompt, Path(wt.path), attempt, task_for_worker, dry_run=dry_run)
+            try:
+                worker_result = worker.run(prompt, Path(wt.path), attempt, task_for_worker, dry_run=dry_run)
+            except Exception as exc:
+                failure = FailureClassification(
+                    "worker_exception",
+                    False,
+                    "inspect_worker_control_files",
+                    [str(exc)],
+                )
+                attempt["finished_at"] = _now()
+                attempt["status"] = "failed"
+                attempt["failure_reason"] = failure.failure_reason
+                attempt["failure"] = failure.to_dict()
+                self.artifacts.write_json(task_id, f"attempts/{idx + 1:02d}/result.json", attempt)
+                self._set_status(
+                    task_id,
+                    "FAILED_FINAL",
+                    "worker_exception",
+                    {"failure_reason": failure.failure_reason, "failure": failure.to_dict(), "attempt": idx + 1},
+                )
+                self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], incident=True)
+                return
             diff_permissions = self._check_worker_diff_permissions(task_id, attempt["worker"], worker_result.changed_files)
             if not diff_permissions["allowed"]:
                 failure = FailureClassification(
@@ -814,6 +843,38 @@ class OrchestratorService:
             self._record_policy_learning(task, project, success=False, worker=route["selected_worker"], model=route["selected_model"])
             return
 
+        if _read_only_result_can_finish(task, final_result):
+            review = _read_only_review(task)
+            self.artifacts.write_json(task_id, "review/review.json", review)
+            self.artifacts.write_text(task_id, "final.md", _final_md(task, route, final_result.__dict__, verify_result.to_dict(), review))
+            if last_attempt:
+                self._write_attempt_metrics(
+                    task_id,
+                    int(last_attempt.get("attempt_no", 1)),
+                    last_attempt,
+                    final_result,
+                    None,
+                    build_passed=verify_result.build_passed,
+                    review_approved=True,
+                )
+            self._set_status(
+                task_id,
+                "COMPLETED_WITH_ARTIFACTS",
+                "read_only_completed",
+                {"worker": final_result.__dict__, "verify": verify_result.to_dict(), "review": review},
+            )
+            self._record_policy_learning(
+                task,
+                project,
+                success=True,
+                worker=route["selected_worker"],
+                model=route["selected_model"],
+                tests_passed=verify_result.tests_passed,
+                codex_review_approved=True,
+                changed_paths=[],
+            )
+            return
+
         # ── Review ──
         self._set_status(task_id, "CODEX_REVIEWING", "review_started", {})
         review = run_codex_review(
@@ -835,7 +896,7 @@ class OrchestratorService:
                     review_approved=False,
                 )
             self.artifacts.write_text(task_id, "final.md", _final_md(task, route, final_result.__dict__, verify_result.to_dict(), review))
-            self._set_status(task_id, "NEEDS_USER", "review_degraded_needs_user",
+            self._set_status(task_id, "NEEDS_REVIEW", "review_degraded_needs_review",
                              {"failure_reason": failure.failure_reason, "failure": failure.to_dict(), "review": review})
             self._record_policy_learning(task, project, success=False, worker=route["selected_worker"], model=route["selected_model"])
             return
@@ -1033,6 +1094,74 @@ class OrchestratorService:
         write_metrics(metrics, Path(self.db.get_task(task_id)["run_dir"]) / "metrics.json")
         self.db.upsert_task_metrics(metrics.to_dict())
 
+    def _reap_stale_worker_task(self, task: dict[str, Any]) -> None:
+        status = str(task.get("status") or "")
+        if status not in {"EXECUTING", "RUNNING", "VERIFYING", "CODEX_REVIEWING", "REVIEWING"}:
+            return
+        run_dir = Path(str(task.get("run_dir") or ""))
+        control_dir = run_dir / "control"
+        process = _read_json_if_exists(control_dir / "process.json") or {}
+        heartbeat = _read_json_if_exists(control_dir / "heartbeat.json") or {}
+        if str(process.get("status") or "") != "running":
+            return
+        last_seen_ts = _parse_timestamp(heartbeat.get("last_seen") or heartbeat.get("ts"))
+        if last_seen_ts is None:
+            return
+        if time.time() - last_seen_ts < 120:
+            return
+        pid = process.get("pid")
+        if isinstance(pid, int) and _pid_is_alive(pid):
+            return
+
+        stdout_path = Path(str(process.get("stdout_path") or run_dir / "worker" / "worker.stream.jsonl"))
+        result_text = _extract_worker_success_text(stdout_path)
+        if result_text and not _task_requires_diff(task):
+            worker_payload = {
+                "status": "success",
+                "summary": result_text,
+                "changed_files": [],
+                "test_suggestions": task.get("test_commands", []),
+                "risks": ["reaped_from_stale_worker_stream"],
+                "needs_orchestrator_action": False,
+                "stdout_path": str(stdout_path),
+                "stderr_path": str(process.get("stderr_path") or ""),
+                "patch_file": None,
+                "tests_run": [],
+                "rollback_notes": "No diff to export",
+                "degraded": False,
+                "degradation_reason": None,
+                "mock_result": False,
+            }
+            verify_result = _dry_verify(task)
+            review = _read_only_review(task, reason="stale_worker_reaped")
+            self.artifacts.write_json(task["task_id"], "result.json", worker_payload)
+            write_verify_result(verify_result, run_dir / "verify" / "verify.json")
+            self.artifacts.write_json(task["task_id"], "verify/changed_files.json", [])
+            self.artifacts.write_json(task["task_id"], "review/review.json", review)
+            route = {
+                "selected_worker": task.get("route_worker") or "unknown",
+                "selected_model": task.get("route_model") or "unknown",
+            }
+            self.artifacts.write_text(task["task_id"], "final.md", _final_md(task, route, worker_payload, verify_result.to_dict(), review))
+            process.update({"status": "reaped", "finished_at": _now(), "reaped_reason": "stale_worker_success_stream"})
+            _write_json_file(control_dir / "process.json", process)
+            self._set_status(
+                task["task_id"],
+                "COMPLETED_WITH_ARTIFACTS",
+                "stale_worker_reaped",
+                {"reason": "stale worker had success result in stream", "stdout_path": str(stdout_path)},
+            )
+            return
+
+        process.update({"status": "failed", "finished_at": _now(), "reaped_reason": "stale_worker_no_live_pid"})
+        _write_json_file(control_dir / "process.json", process)
+        self._set_status(
+            task["task_id"],
+            "FAILED_FINAL",
+            "stale_worker_failed",
+            {"reason": "worker process is not alive and no recoverable success result was found"},
+        )
+
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -1114,6 +1243,111 @@ def _read_json_if_exists(path: Path) -> dict[str, Any] | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {"unreadable": str(path)}
+
+
+def _write_json_file(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _parse_timestamp(value: Any) -> float | None:
+    if not value:
+        return None
+    try:
+        if isinstance(value, (int, float)):
+            return float(value)
+        from datetime import datetime
+
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            proc = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return str(pid) in proc.stdout
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _extract_worker_success_text(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    result_text: str | None = None
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") == "result" and event.get("subtype") == "success":
+            raw = event.get("result")
+            if isinstance(raw, str) and raw.strip():
+                result_text = raw.strip()
+        message = event.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, list):
+                text = "\n".join(
+                    item.get("text", "")
+                    for item in content
+                    if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str)
+                ).strip()
+                if text:
+                    result_text = text
+    return result_text
+
+
+def _read_only_result_can_finish(task: dict[str, Any], worker_result: Any) -> bool:
+    return (
+        not _task_requires_diff(task)
+        and getattr(worker_result, "status", "") == "success"
+        and not getattr(worker_result, "changed_files", [])
+    )
+
+
+def _read_only_review(task: dict[str, Any], reason: str = "read_only_no_diff") -> dict[str, Any]:
+    return {
+        "approved": True,
+        "review_mode": "skipped_read_only",
+        "degraded": False,
+        "degradation_reason": None,
+        "available": True,
+        "risk_level": task.get("risk_level", "medium"),
+        "blocking_issues": [],
+        "non_blocking_issues": [],
+        "required_changes": [],
+        "final_recommendation": "read-only task completed with artifacts; no patch or PR is required",
+        "can_create_pr": False,
+        "reason": reason,
+    }
 
 
 def _safe_parallelism_from_profile(profile: dict[str, Any]) -> int:
@@ -1284,6 +1518,26 @@ def _task_requires_diff(task: dict[str, Any]) -> bool:
     goal = str(task.get("user_goal", "")).lower()
     task_type = str(task.get("task_type", "")).lower()
     if task.get("allow_empty_diff") is True:
+        return False
+    explicit_no_write_markers = (
+        "read-only",
+        "readonly",
+        "no changes",
+        "do not modify",
+        "do not edit",
+        "do not write",
+        "do not change files",
+        "without modifying",
+        "只读",
+        "不修改",
+        "不要修改",
+        "不改",
+        "不要改",
+        "不写入",
+        "不自动改文件",
+        "只做只读分析",
+    )
+    if any(marker in goal for marker in explicit_no_write_markers):
         return False
     read_only_markers = (
         "analyze",

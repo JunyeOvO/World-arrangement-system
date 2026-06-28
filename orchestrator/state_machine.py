@@ -19,6 +19,7 @@ STATE_ALIASES: dict[str, str] = {
     "COMPLETED": "DONE",
     "COMPLETED_WITH_PATCH": "DONE_WITH_BLOCK",
     "COMPLETED_NO_CHANGES": "DONE",
+    "COMPLETED_WITH_ARTIFACTS": "DONE",
     "DRY_RUN_COMPLETED": "DONE",
 }
 
@@ -74,7 +75,7 @@ TRANSITIONS: dict[str, set[str]] = {
     "EXECUTING": {"VERIFYING", "RETRYING", "FAILED", "FAILED_FINAL", "CANCELLED"},
     "RETRYING": {"EXECUTING", "ESCALATED"},
     "VERIFYING": {"CODEX_REVIEWING", "FAILED", "FAILED_FINAL"},
-    "CODEX_REVIEWING": {"POLICY_LEARNING", "NEEDS_USER", "FAILED_FINAL"},
+    "CODEX_REVIEWING": {"POLICY_LEARNING", "NEEDS_USER", "NEEDS_REVIEW", "FAILED_FINAL"},
 
     # ── Post-execution flow ──
     "POLICY_LEARNING": {"PR_CREATED", "DONE", "DONE_WITH_BLOCK"},
@@ -82,6 +83,7 @@ TRANSITIONS: dict[str, set[str]] = {
 
     # ── Recovery / escalation ──
     "NEEDS_USER": {"NEW", "CANCELLED"},
+    "NEEDS_REVIEW": {"PLANNED", "CANCELLED"},
     "ESCALATED": {"NEEDS_USER", "FAILED_FINAL"},
     "FAILED": {"RETRYING", "ESCALATED", "FAILED_FINAL", "NEEDS_USER"},
 
@@ -108,6 +110,7 @@ def _build_old_transitions() -> dict[str, set[str]]:
     old_map.setdefault("COMPLETED", set())
     old_map.setdefault("COMPLETED_WITH_PATCH", set())
     old_map.setdefault("COMPLETED_NO_CHANGES", set())
+    old_map.setdefault("COMPLETED_WITH_ARTIFACTS", set())
     old_map.setdefault("DRY_RUN_COMPLETED", set())
     return old_map
 
@@ -123,6 +126,7 @@ _TRANSITIONS_MERGED.update(TRANSITIONS)
 _TRANSITIONS_MERGED["COMPLETED"] = frozenset()
 _TRANSITIONS_MERGED["COMPLETED_WITH_PATCH"] = frozenset()
 _TRANSITIONS_MERGED["COMPLETED_NO_CHANGES"] = frozenset()
+_TRANSITIONS_MERGED["COMPLETED_WITH_ARTIFACTS"] = frozenset()
 _TRANSITIONS_MERGED["DRY_RUN_COMPLETED"] = frozenset()
 _TRANSITIONS_MERGED["PUBLISHING"] = {"PR_CREATED", "COMPLETED_WITH_PATCH", "FAILED_FINAL"}
 

@@ -225,6 +225,8 @@ def test_console_snapshot_assigns_status_groups(tmp_path: Path):
     service = StubService(tmp_path)
     _create_task(service, status="NEW", task_id="task_queued")
     _create_task(service, status="NEEDS_USER", task_id="task_approval")
+    _create_task(service, status="NEEDS_REVIEW", task_id="task_review")
+    _create_task(service, status="RETRYING", task_id="task_retrying")
     _create_task(service, status="FAILED_FINAL", task_id="task_failed")
     _create_task(service, status="COMPLETED_NO_CHANGES", task_id="task_done")
     api = ConsoleAPI(service)  # type: ignore[arg-type]
@@ -233,11 +235,13 @@ def test_console_snapshot_assigns_status_groups(tmp_path: Path):
 
     assert status == 200
     assert payload["health"]["queued"] == 1
-    assert payload["health"]["approval_waiting"] == 1
+    assert payload["health"]["approval_waiting"] == 2
     assert payload["health"]["failed"] == 1
     groups = {task["task_id"]: task["console_group"] for task in payload["tasks"]}
     assert groups["task_queued"] == "queued"
     assert groups["task_approval"] == "approval"
+    assert groups["task_review"] == "approval"
+    assert groups["task_retrying"] == "none"
     assert groups["task_failed"] == "failed"
     assert groups["task_done"] == "none"
 
@@ -321,6 +325,19 @@ def test_cancel_action_calls_registered_service_and_audits(tmp_path: Path):
     assert service.cancelled == [(task_id, "stop from console")]
     events = service.db.list_events(task_id)
     assert events[-1]["event_type"] == "console.cancel_clicked"
+
+
+def test_retry_action_is_explicitly_not_implemented_and_keeps_state(tmp_path: Path):
+    service = StubService(tmp_path)
+    task_id = _create_task(service, status="FAILED_FINAL")
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    status, _, payload = api.handle_post(f"/api/tasks/{task_id}/retry", b"{}")
+
+    assert status == 501
+    assert payload["status"] == "RETRY_NOT_IMPLEMENTED"
+    assert service.db.get_task(task_id)["status"] == "FAILED_FINAL"
+    assert service.db.list_events(task_id)[-1]["event_type"] == "console.retry_rejected"
 
 
 def test_dismiss_failed_task_removes_it_from_console_snapshot(tmp_path: Path):

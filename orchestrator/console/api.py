@@ -13,7 +13,7 @@ from .redaction import redact
 
 ALLOWED_ACTIONS = {"cancel", "retry", "approve", "reject", "resolve_alert"}
 RETRYABLE_STATES = {"FAILED", "FAILED_FINAL", "CANCELLED", "DONE_WITH_BLOCK", "COMPLETED_WITH_PATCH"}
-APPROVAL_STATES = {"HARD_APPROVAL_WAITING", "SOFT_APPROVAL_WAITING", "NEEDS_USER", "BLOCKED"}
+APPROVAL_STATES = {"HARD_APPROVAL_WAITING", "SOFT_APPROVAL_WAITING", "NEEDS_USER", "NEEDS_REVIEW", "BLOCKED"}
 DISMISSIBLE_STATES = {"FAILED", "FAILED_FINAL"} | APPROVAL_STATES
 
 
@@ -25,6 +25,7 @@ class ConsoleAPI:
     def handle_get(self, path: str, query: str = "") -> tuple[int, str, Any]:
         params = {key: values[-1] for key, values in parse_qs(query).items() if values}
         if path == "/api/console/snapshot":
+            self._reap_stale_tasks_for_snapshot()
             return 200, "application/json", self.queries.snapshot()
         if path == "/api/tasks":
             return 200, "application/json", self.queries.list_tasks(
@@ -87,6 +88,13 @@ class ConsoleAPI:
             return self.queries.read_artifact_text(task_id, relative)
         return 404, "application/json", {"status": "NOT_FOUND"}
 
+    def _reap_stale_tasks_for_snapshot(self) -> None:
+        reaper = getattr(self.service, "_reap_stale_worker_task", None)
+        if not callable(reaper):
+            return
+        for task in self.service.db.list_tasks(limit=100):
+            reaper(task)
+
     def _cancel(self, task_id: str, reason: str) -> tuple[int, str, Any]:
         task = self.service.db.get_task(task_id)
         if not task:
@@ -103,9 +111,14 @@ class ConsoleAPI:
             return 404, "application/json", {"status": "NOT_FOUND", "task_id": task_id}
         if str(task["status"]) not in RETRYABLE_STATES:
             return 409, "application/json", {"status": "INVALID_STATE", "task_id": task_id, "action": "retry"}
-        self.service.db.update_task(task_id, status="RETRYING", updated_at=__import__("time").strftime("%Y-%m-%dT%H:%M:%SZ", __import__("time").gmtime()))
-        self.service.db.append_event(task_id, "console.retry_clicked", task["status"], "RETRYING", {})
-        return 200, "application/json", self.service.get_task_status(task_id)
+        self.service.db.append_event(task_id, "console.retry_rejected", task["status"], task["status"], {
+            "reason": "manual retry is not implemented; use a new submitted task instead",
+        })
+        return 501, "application/json", {
+            "status": "RETRY_NOT_IMPLEMENTED",
+            "task_id": task_id,
+            "message": "Manual retry cannot safely resume worker state yet. Submit a new task instead.",
+        }
 
     def _approval(self, task_id: str, action: str, payload: dict[str, Any]) -> tuple[int, str, Any]:
         task = self.service.db.get_task(task_id)

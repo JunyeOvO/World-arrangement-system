@@ -1,5 +1,7 @@
 """Tests for scheduler retry chain and escalation logic."""
 import json
+import subprocess
+from pathlib import Path
 
 from orchestrator.scheduler import (
     OrchestratorService,
@@ -12,6 +14,7 @@ from orchestrator.scheduler import (
     _task_requests_project_verification,
     _worker_prompt,
 )
+from orchestrator.workers.base import WorkerResult
 
 
 class _FakeResult:
@@ -158,6 +161,16 @@ def test_edit_task_requires_diff():
     assert _task_requires_diff({"user_goal": "先分析根因，然后修复登录 bug"})
 
 
+def test_explicit_read_only_instruction_overrides_fix_plan_wording():
+    assert not _task_requires_diff({
+        "user_goal": (
+            "只读调查 travel_with_me 的语言和框架，不修改文件。"
+            "输出问题、风险、修复计划和下一步建议。"
+        ),
+        "task_type": "analysis",
+    })
+
+
 def test_read_only_task_skips_project_verification_without_explicit_request():
     class Result:
         changed_files: list[str] = []
@@ -210,7 +223,7 @@ def test_opencode_prompt_embeds_context_without_external_artifact_paths(tmp_path
 def test_get_task_control_reads_control_files(tmp_path, monkeypatch):
     monkeypatch.setenv("AI_ORCHESTRATOR_HOME", str(tmp_path / "runtime"))
     service = OrchestratorService()
-    run_dir = tmp_path / "run"
+    run_dir = service.artifacts.run_dir("t_reap")
     control_dir = run_dir / "control"
     control_dir.mkdir(parents=True)
     (control_dir / "process.json").write_text(
@@ -242,9 +255,6 @@ def test_get_task_control_reads_control_files(tmp_path, monkeypatch):
 
 
 def test_scheduler_writes_verify_and_metrics_artifacts(tmp_path, monkeypatch):
-    import subprocess
-    from pathlib import Path
-
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
@@ -295,6 +305,116 @@ def test_scheduler_writes_verify_and_metrics_artifacts(tmp_path, monkeypatch):
     assert "degraded_mock_result" in final_md
     assert metrics_payload["task_id"] == result["task_id"]
     assert db_metrics[0]["model"] == "deepseek_pro"
+
+
+def test_read_only_worker_success_completes_with_artifacts(tmp_path, monkeypatch):
+    class FakeWorker:
+        name = "fake_worker"
+
+        def run(self, prompt, worktree, route, task, dry_run=False):
+            return WorkerResult(
+                status="success",
+                summary="Travel_with_me uses TypeScript and a Hono-style backend.",
+                changed_files=[],
+            )
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "x@y"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "x"], cwd=repo, check=True)
+    (repo / "README.md").write_text("hi\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "models.yaml").write_text(
+        "models:\n  deepseek_pro:\n    provider: deepseek\n    adapter: claude_code\n"
+        "    model: deepseek-v4-pro\n    worker: claude_code\n",
+        encoding="utf-8",
+    )
+    (home / "policies.yaml").write_text(
+        Path("config/policies.yaml.example").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (home / "projects.yaml").write_text(
+        "projects:\n  generic:\n    project_id: generic\n    name: Generic\n"
+        f"    repo: {repo}\n    stack: [python]\n    test_commands: []\n    build_commands: []\n"
+        "    forbidden_paths: []\n    default_worker: claude_code\n"
+        "    default_model: deepseek_pro\n    allow_auto_pr: false\n    allow_remote_push: false\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AI_ORCHESTRATOR_HOME", str(home))
+    monkeypatch.setitem(__import__("orchestrator.scheduler", fromlist=["WORKERS"]).WORKERS, "claude_code", FakeWorker())
+
+    service = OrchestratorService()
+    result = service.submit_task(
+        "generic",
+        "只读调查项目用了什么语言，不修改文件，输出结论和修复计划。",
+        "low",
+        True,
+        False,
+        dry_run=False,
+    )
+    run_dir = Path(result["run_dir"])
+
+    assert service.get_task_status(result["task_id"])["status"] == "COMPLETED_WITH_ARTIFACTS"
+    review_payload = json.loads((run_dir / "review" / "review.json").read_text(encoding="utf-8"))
+    final_md = (run_dir / "final.md").read_text(encoding="utf-8")
+    assert review_payload["review_mode"] == "skipped_read_only"
+    assert review_payload["approved"] is True
+    assert "Travel_with_me uses TypeScript" in final_md
+
+
+def test_reaper_recovers_stale_read_only_success_stream(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_ORCHESTRATOR_HOME", str(tmp_path / "runtime"))
+    service = OrchestratorService()
+    run_dir = service.artifacts.run_dir("t_reap")
+    control_dir = run_dir / "control"
+    worker_dir = run_dir / "worker"
+    control_dir.mkdir(parents=True)
+    worker_dir.mkdir(parents=True)
+    (control_dir / "process.json").write_text(
+        json.dumps({
+            "pid": 999999,
+            "status": "running",
+            "stdout_path": str(worker_dir / "worker.stream.jsonl"),
+        }),
+        encoding="utf-8",
+    )
+    (control_dir / "heartbeat.json").write_text(
+        json.dumps({"status": "running", "last_seen": "2026-06-28T00:00:00Z"}),
+        encoding="utf-8",
+    )
+    (worker_dir / "worker.stream.jsonl").write_text(
+        json.dumps({
+            "type": "result",
+            "subtype": "success",
+            "result": "## Project Quality\n\nRead-only analysis completed.",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    service.db.create_task({
+        "task_id": "t_reap",
+        "project_id": "travel_with_me",
+        "repo_path": str(tmp_path),
+        "user_goal": "只读评价项目质量，不修改文件，输出修复计划。",
+        "status": "EXECUTING",
+        "created_at": "2026-06-28T00:00:00Z",
+        "updated_at": "2026-06-28T00:00:00Z",
+        "route_worker": "claude_code",
+        "route_model": "deepseek_pro",
+        "route_variant": "",
+        "pr_url": None,
+        "run_dir": str(run_dir),
+    })
+
+    result = service.get_task_status("t_reap")
+
+    assert result["status"] == "COMPLETED_WITH_ARTIFACTS"
+    assert (run_dir / "final.md").exists()
+    assert service.db.list_events("t_reap")[-1]["event_type"] == "stale_worker_reaped"
 
 
 def test_scheduler_permission_diff_check_writes_audit_event(tmp_path, monkeypatch):
