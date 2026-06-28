@@ -17,7 +17,7 @@ from orchestrator.db import TaskDB
 
 from .display_names import display_agent_name, display_model_name, display_route_tree
 from .alerts import evaluate_alerts
-from .pricing import calculate_token_cost_usd
+from .pricing import calculate_token_cost_usd, has_price
 from .serializers import (
     alert_view,
     artifact_allowed,
@@ -281,6 +281,85 @@ class ConsoleQueries:
             "calls": calls,
         }
 
+    def metrics_efficiency(self, reference_model: str = "opencode-go/glm-5.2") -> dict[str, Any]:
+        rows = self._metric_rows()
+        total_input = sum(_metric_int(row.get("input_tokens")) for row in rows)
+        total_output = sum(_metric_int(row.get("output_tokens")) for row in rows)
+        total_cache = sum(_metric_int(row.get("cache_read_input_tokens")) for row in rows)
+        total_tokens = total_input + total_output + total_cache
+        missing_token_rows = sum(1 for row in rows if _tokens_missing(row))
+        priced_rows = [row for row in rows if has_price(row.get("model"))]
+        actual_cost = sum(calculate_token_cost_usd(row) for row in rows)
+        baseline_cost = sum(calculate_token_cost_usd(row, reference_model) for row in rows)
+        savings = baseline_cost - actual_cost
+        cache_denominator = total_input + total_cache
+        by_model: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in rows:
+            worker = display_agent_name(row.get("worker"))
+            model = display_model_name(row.get("model"))
+            key = (str(worker or ""), str(model or ""))
+            item = by_model.setdefault(key, {
+                "worker": worker,
+                "model": model,
+                "attempts": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "actual_cost_usd": 0.0,
+                "reference_cost_usd": 0.0,
+            })
+            item["attempts"] += 1
+            item["input_tokens"] += _metric_int(row.get("input_tokens"))
+            item["output_tokens"] += _metric_int(row.get("output_tokens"))
+            item["cache_read_input_tokens"] += _metric_int(row.get("cache_read_input_tokens"))
+            item["actual_cost_usd"] += calculate_token_cost_usd(row)
+            item["reference_cost_usd"] += calculate_token_cost_usd(row, reference_model)
+        model_rows = []
+        for item in by_model.values():
+            item_total_tokens = (
+                int(item["input_tokens"])
+                + int(item["output_tokens"])
+                + int(item["cache_read_input_tokens"])
+            )
+            item_actual = float(item["actual_cost_usd"])
+            item_reference = float(item["reference_cost_usd"])
+            model_rows.append({
+                "worker": item["worker"],
+                "model": item["model"],
+                "attempts": item["attempts"],
+                "input_tokens": item["input_tokens"],
+                "output_tokens": item["output_tokens"],
+                "cache_read_input_tokens": item["cache_read_input_tokens"],
+                "total_tokens": item_total_tokens,
+                "actual_cost_usd": round(item_actual, 6),
+                "reference_cost_usd": round(item_reference, 6),
+                "savings_usd": round(item_reference - item_actual, 6),
+            })
+        model_rows.sort(key=lambda row: (-float(row["savings_usd"]), str(row["model"])))
+        return {
+            "attempts": len(rows),
+            "priced_attempts": len(priced_rows),
+            "missing_token_rows": missing_token_rows,
+            "reference_model": display_model_name(reference_model),
+            "actual_cost_usd": round(actual_cost, 6),
+            "reference_cost_usd": round(baseline_cost, 6),
+            "savings_usd": round(savings, 6),
+            "savings_pct": round((savings / baseline_cost) * 100, 2) if baseline_cost > 0 else 0.0,
+            "input_tokens": total_input,
+            "output_tokens": total_output,
+            "cache_read_input_tokens": total_cache,
+            "total_tokens": total_tokens,
+            "cache_read_ratio": round((total_cache / cache_denominator) * 100, 2)
+            if cache_denominator > 0 else 0.0,
+            "codex_token_savings_measured": False,
+            "codex_token_savings_note": (
+                "World records worker token usage and computed model cost. It does not yet record a "
+                "same-task no-World Codex baseline, so Codex token savings are an inferred capability, "
+                "not a measured metric."
+            ),
+            "by_model": model_rows,
+        }
+
     def _metric_rows(self) -> list[dict[str, Any]]:
         tasks = self.db.list_tasks(limit=500)
         rows: list[dict[str, Any]] = []
@@ -407,6 +486,21 @@ def _metric_date(created_at: str) -> str:
     if not created_at:
         return "unknown"
     return created_at[:10]
+
+
+def _metric_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _tokens_missing(row: dict[str, Any]) -> bool:
+    return (
+        row.get("input_tokens") is None
+        and row.get("output_tokens") is None
+        and row.get("cache_read_input_tokens") is None
+    )
 
 
 def _session_label(task_id: str) -> str:

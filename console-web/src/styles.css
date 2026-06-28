@@ -296,6 +296,19 @@ small {
   font-size: 22px;
 }
 
+.efficiency-kpis {
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+}
+
+.efficiency-kpis .summary-kpi strong {
+  font-size: 20px;
+  overflow-wrap: anywhere;
+}
+
+.efficiency-table {
+  margin-top: 12px;
+}
+
 .compact-models {
   display: flex;
   flex-direction: column;

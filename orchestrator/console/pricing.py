@@ -32,8 +32,8 @@ MILLION = Decimal(1_000_000)
 USD_PRECISION = Decimal("0.000001")
 
 
-def calculate_token_cost_usd(row: dict[str, Any]) -> float:
-    price = _price_for_model(row.get("model"))
+def calculate_token_cost_usd(row: dict[str, Any], model: str | None = None) -> float:
+    price = _price_for_model(model or row.get("model"))
     if price is None:
         return 0.0
     input_tokens = _decimal_int(row.get("input_tokens"))
@@ -51,6 +51,10 @@ def _price_for_model(value: Any) -> TokenPrice | None:
     if not isinstance(value, str):
         return None
     return PRICES_USD_PER_MILLION.get(value.strip().lower())
+
+
+def has_price(value: Any) -> bool:
+    return _price_for_model(value) is not None
 
 
 def _decimal_int(value: Any) -> Decimal:

@@ -25,6 +25,9 @@ def test_preserves_numeric_metric_token_counts():
         "input_tokens": 45978,
         "output_tokens": 74,
         "cache_read_input_tokens": 0,
+        "total_tokens": 46052,
+        "missing_token_rows": 1,
+        "codex_token_savings_measured": False,
         "auth_token": "Bearer abcdefghijklmnopqrstuvwxyz",
     }
 
@@ -33,4 +36,7 @@ def test_preserves_numeric_metric_token_counts():
     assert result["input_tokens"] == 45978
     assert result["output_tokens"] == 74
     assert result["cache_read_input_tokens"] == 0
+    assert result["total_tokens"] == 46052
+    assert result["missing_token_rows"] == 1
+    assert result["codex_token_savings_measured"] is False
     assert result["auth_token"] == "[REDACTED]"

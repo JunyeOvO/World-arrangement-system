@@ -1,13 +1,15 @@
 import { CSSProperties, useEffect, useMemo, useState } from "react";
-import { ChartColumn, CircleDollarSign, Clock3, Gauge } from "lucide-react";
-import { api, ConsoleSnapshot, MetricsUsage } from "../api/client";
+import { ChartColumn, CircleDollarSign, Clock3, Gauge, Scale } from "lucide-react";
+import { api, ConsoleSnapshot, MetricsEfficiency, MetricsUsage } from "../api/client";
 
 export function Metrics({ snapshot }: { snapshot: ConsoleSnapshot }) {
   const [usage, setUsage] = useState<MetricsUsage | null>(null);
+  const [efficiency, setEfficiency] = useState<MetricsEfficiency | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     api.metricsUsage().then(setUsage).catch((err) => setError(err.message));
+    api.metricsEfficiency().then(setEfficiency).catch((err) => setError(err.message));
   }, []);
 
   return (
@@ -21,6 +23,7 @@ export function Metrics({ snapshot }: { snapshot: ConsoleSnapshot }) {
         </div>
       </section>
       <ModelSummary models={snapshot.models} />
+      <EfficiencyPanel efficiency={efficiency} />
       <section className="panel metrics-wide">
         <h2>Cost by Model</h2>
         {error && <div className="banner">{error}</div>}
@@ -66,6 +69,57 @@ function ModelSummary({ models }: { models: ConsoleSnapshot["models"] }) {
           </div>
         ))}
       </div>
+    </section>
+  );
+}
+
+function EfficiencyPanel({ efficiency }: { efficiency: MetricsEfficiency | null }) {
+  return (
+    <section className="panel metrics-wide">
+      <div className="panel-head">
+        <h2>Efficiency</h2>
+        {efficiency && <span className="process-count">{efficiency.savings_pct.toFixed(0)}%</span>}
+      </div>
+      {!efficiency ? (
+        <div className="empty-process"><Scale size={20} /><span>Loading efficiency...</span></div>
+      ) : (
+        <>
+          <div className="summary-kpis efficiency-kpis">
+            <MetricKpi label="Actual cost" value={`$${efficiency.actual_cost_usd.toFixed(4)}`} icon={<CircleDollarSign size={18} />} />
+            <MetricKpi label={`${efficiency.reference_model} baseline`} value={`$${efficiency.reference_cost_usd.toFixed(4)}`} icon={<Scale size={18} />} />
+            <MetricKpi label="Saved" value={`$${efficiency.savings_usd.toFixed(4)}`} icon={<Gauge size={18} />} />
+            <MetricKpi label="Total tokens" value={formatNumber(efficiency.total_tokens)} icon={<ChartColumn size={18} />} />
+            <MetricKpi label="Cache read" value={`${efficiency.cache_read_ratio.toFixed(1)}%`} icon={<ChartColumn size={18} />} />
+            <MetricKpi label="Missing token rows" value={efficiency.missing_token_rows.toString()} icon={<Clock3 size={18} />} />
+          </div>
+          <div className="table-wrap efficiency-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th>Attempts</th>
+                  <th>Tokens</th>
+                  <th>Actual</th>
+                  <th>Baseline</th>
+                  <th>Saved</th>
+                </tr>
+              </thead>
+              <tbody>
+                {efficiency.by_model.map((row) => (
+                  <tr key={`${row.worker}-${row.model}`}>
+                    <td><code>{row.model}</code><small>{row.worker}</small></td>
+                    <td>{row.attempts}</td>
+                    <td>{formatNumber(row.total_tokens)}</td>
+                    <td>${row.actual_cost_usd.toFixed(4)}</td>
+                    <td>${row.reference_cost_usd.toFixed(4)}</td>
+                    <td>${row.savings_usd.toFixed(4)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </section>
   );
 }
@@ -180,4 +234,8 @@ function formatDateTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return `${date.getMonth() + 1}月${date.getDate()}日 ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("en-US").format(value);
 }

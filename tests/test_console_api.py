@@ -557,3 +557,63 @@ def test_model_metrics_merges_display_name_aliases(tmp_path: Path):
         "success_rate": 1.0,
         "total_cost_usd": 0.00394,
     }]
+
+
+def test_metrics_efficiency_reports_real_token_cost_and_reference_baseline(tmp_path: Path):
+    service = StubService(tmp_path)
+    _create_task(service, status="COMPLETED_WITH_PATCH", task_id="task_efficiency_low")
+    _create_task(service, status="COMPLETED_WITH_PATCH", task_id="task_efficiency_high")
+    service.db.upsert_task_metrics({
+        "task_id": "task_efficiency_low",
+        "attempt_no": 1,
+        "worker": "claude_code",
+        "model": "deepseek_flash",
+        "status": "success",
+        "failure_reason": "",
+        "total_cost_usd": 99.99,
+        "duration_ms": 1000,
+        "duration_api_ms": 900,
+        "num_turns": 1,
+        "input_tokens": 1_000_000,
+        "output_tokens": 100_000,
+        "cache_read_input_tokens": 500_000,
+        "changed_files_count": 1,
+        "build_passed": True,
+        "review_approved": True,
+        "created_at": "2026-06-28T13:12:00Z",
+    })
+    service.db.upsert_task_metrics({
+        "task_id": "task_efficiency_high",
+        "attempt_no": 1,
+        "worker": "opencode",
+        "model": "opencode_go_glm52",
+        "status": "success",
+        "failure_reason": "",
+        "total_cost_usd": 99.99,
+        "duration_ms": 1000,
+        "duration_api_ms": 900,
+        "num_turns": 1,
+        "input_tokens": None,
+        "output_tokens": None,
+        "cache_read_input_tokens": None,
+        "changed_files_count": 1,
+        "build_passed": True,
+        "review_approved": True,
+        "created_at": "2026-06-28T13:12:00Z",
+    })
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    status, _, payload = api.handle_get("/api/metrics/efficiency")
+
+    assert status == 200
+    assert payload["reference_model"] == "GLM-5.2"
+    assert payload["actual_cost_usd"] == 0.1694
+    assert payload["reference_cost_usd"] == 1.97
+    assert payload["savings_usd"] == 1.8006
+    assert payload["savings_pct"] == 91.4
+    assert payload["total_tokens"] == 1_600_000
+    assert payload["cache_read_ratio"] == 33.33
+    assert payload["missing_token_rows"] == 1
+    assert payload["codex_token_savings_measured"] is False
+    assert payload["by_model"][0]["model"] == "Deepseek-V4-flash"
+    assert payload["by_model"][0]["savings_usd"] == 1.8006

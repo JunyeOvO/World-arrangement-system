@@ -89,6 +89,36 @@ export type MetricsUsage = {
   }>;
 };
 
+export type MetricsEfficiency = {
+  attempts: number;
+  priced_attempts: number;
+  missing_token_rows: number;
+  reference_model: string;
+  actual_cost_usd: number;
+  reference_cost_usd: number;
+  savings_usd: number;
+  savings_pct: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  total_tokens: number;
+  cache_read_ratio: number;
+  codex_token_savings_measured: boolean;
+  codex_token_savings_note: string;
+  by_model: Array<{
+    worker: string;
+    model: string;
+    attempts: number;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens: number;
+    total_tokens: number;
+    actual_cost_usd: number;
+    reference_cost_usd: number;
+    savings_usd: number;
+  }>;
+};
+
 export type Alert = {
   alert_id: string;
   severity: string;
@@ -121,6 +151,7 @@ export const api = {
     getText(`/api/tasks/${encodeURIComponent(taskId)}/artifacts/${artifactPath}`),
   metrics: () => getJson<MetricsSummary>("/api/metrics/summary"),
   metricsUsage: () => getJson<MetricsUsage>("/api/metrics/usage?limit=200"),
+  metricsEfficiency: () => getJson<MetricsEfficiency>("/api/metrics/efficiency"),
   models: () => getJson<{ models: ModelMetric[] }>("/api/metrics/models"),
   audit: () => getJson<{ events: TimelineEvent[] }>("/api/audit?limit=100"),
   cancelTask: (taskId: string) => postJson(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { reason: "console cancel" }),
