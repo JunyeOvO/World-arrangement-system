@@ -11,7 +11,7 @@ import "./styles.css";
 type Page = "overview" | "task" | "metrics" | "audit";
 
 function App() {
-  const { snapshot, error } = useConsoleSnapshot();
+  const { snapshot, error, refresh } = useConsoleSnapshot();
   const [page, setPage] = useState<Page>("overview");
   const [taskId, setTaskId] = useState<string | null>(null);
 
@@ -31,7 +31,7 @@ function App() {
       <section className="workspace">
         {error && <div className="banner">{error}</div>}
         {!snapshot && <div className="panel">Loading console...</div>}
-        {snapshot && page === "overview" && <Overview snapshot={snapshot} onSelectTask={selectTask} />}
+        {snapshot && page === "overview" && <Overview snapshot={snapshot} onSelectTask={selectTask} onRefresh={refresh} />}
         {snapshot && page === "metrics" && <Metrics snapshot={snapshot} />}
         {page === "audit" && <Audit />}
         {page === "task" && taskId && <TaskDetail taskId={taskId} />}
@@ -45,4 +45,3 @@ createRoot(document.getElementById("root")!).render(
     <App />
   </StrictMode>
 );
-

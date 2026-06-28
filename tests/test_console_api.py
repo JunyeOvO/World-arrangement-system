@@ -155,3 +155,46 @@ def test_cancel_action_calls_registered_service_and_audits(tmp_path: Path):
     assert service.cancelled == [(task_id, "stop from console")]
     events = service.db.list_events(task_id)
     assert events[-1]["event_type"] == "console.cancel_clicked"
+
+
+def test_dismiss_failed_task_removes_it_from_console_snapshot(tmp_path: Path):
+    service = StubService(tmp_path)
+    task_id = _create_task(service, status="FAILED_FINAL")
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    status, _, payload = api.handle_post(
+        f"/api/tasks/{task_id}/dismiss",
+        b'{"reason":"hide from failed cards"}',
+    )
+    snapshot_status, _, snapshot = api.handle_get("/api/console/snapshot")
+
+    assert status == 200
+    assert payload == {"status": "dismissed", "task_id": task_id}
+    assert snapshot_status == 200
+    assert snapshot["health"]["failed"] == 0
+    assert all(task["task_id"] != task_id for task in snapshot["tasks"])
+    assert service.db.list_events(task_id)[-1]["event_type"] == "console.task_dismissed"
+
+
+def test_dismiss_approval_task_removes_it_from_console_snapshot(tmp_path: Path):
+    service = StubService(tmp_path)
+    task_id = _create_task(service, status="HARD_APPROVAL_WAITING")
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    status, _, _ = api.handle_post(f"/api/tasks/{task_id}/dismiss", b"{}")
+    _, _, snapshot = api.handle_get("/api/console/snapshot")
+
+    assert status == 200
+    assert snapshot["health"]["approval_waiting"] == 0
+    assert all(task["task_id"] != task_id for task in snapshot["tasks"])
+
+
+def test_dismiss_rejects_non_failed_non_approval_task(tmp_path: Path):
+    service = StubService(tmp_path)
+    task_id = _create_task(service, status="DONE")
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    status, _, payload = api.handle_post(f"/api/tasks/{task_id}/dismiss", b"{}")
+
+    assert status == 409
+    assert payload["status"] == "INVALID_STATE"

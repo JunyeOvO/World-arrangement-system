@@ -162,6 +162,13 @@ CREATE TABLE IF NOT EXISTS system_alerts (
   status TEXT,
   resolved_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS console_task_dismissals (
+  task_id TEXT PRIMARY KEY,
+  dismissed_at TEXT NOT NULL,
+  dismissed_by TEXT NOT NULL,
+  reason TEXT
+);
 """
 
 
@@ -605,6 +612,33 @@ class TaskDB:
                 [resolved_at, alert_id],
             )
         return cur.rowcount > 0
+
+    def dismiss_console_task(
+        self,
+        task_id: str,
+        dismissed_at: str,
+        dismissed_by: str = "console",
+        reason: str = "",
+    ) -> None:
+        self.init()
+        with self.connect() as con:
+            con.execute(
+                """
+                INSERT INTO console_task_dismissals(task_id, dismissed_at, dismissed_by, reason)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(task_id) DO UPDATE SET
+                  dismissed_at=excluded.dismissed_at,
+                  dismissed_by=excluded.dismissed_by,
+                  reason=excluded.reason
+                """,
+                [task_id, dismissed_at, dismissed_by, reason],
+            )
+
+    def list_console_dismissed_task_ids(self) -> set[str]:
+        self.init()
+        with self.connect() as con:
+            rows = con.execute("SELECT task_id FROM console_task_dismissals").fetchall()
+        return {str(row["task_id"]) for row in rows}
 
 
 def _json_safe(value: Any) -> Any:

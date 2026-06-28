@@ -1,4 +1,4 @@
-import { ArrowRight, Box, Clock3 } from "lucide-react";
+import { ArrowRight, Box, Clock3, Trash2 } from "lucide-react";
 import { Alert, TaskSummary } from "../api/client";
 import { HealthMetricKey } from "./HealthStrip";
 
@@ -15,13 +15,17 @@ export function ProcessCards({
   group,
   tasks,
   alerts,
-  onSelectTask
+  onSelectTask,
+  onDismissTask
 }: {
   group: HealthMetricKey;
   tasks: TaskSummary[];
   alerts: Alert[];
   onSelectTask: (taskId: string) => void;
+  onDismissTask: (taskId: string) => void;
 }) {
+  const canDismissTask = group === "failed" || group === "approval";
+
   return (
     <section className="panel process-panel">
       <div className="panel-head">
@@ -68,9 +72,21 @@ export function ProcessCards({
               </dl>
               <div className="process-card-foot">
                 <span><Clock3 size={13} /> {task.updated_at}</span>
-                <button type="button" onClick={() => onSelectTask(task.task_id)}>
-                  Detail <ArrowRight size={14} />
-                </button>
+                <div className="process-card-actions">
+                  {canDismissTask && (
+                    <button
+                      className="delete-action"
+                      type="button"
+                      onClick={() => onDismissTask(task.task_id)}
+                      title="Remove this process from the console list"
+                    >
+                      Delete <Trash2 size={14} />
+                    </button>
+                  )}
+                  <button type="button" onClick={() => onSelectTask(task.task_id)}>
+                    Detail <ArrowRight size={14} />
+                  </button>
+                </div>
               </div>
             </article>
           ))}

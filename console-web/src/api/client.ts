@@ -85,6 +85,7 @@ export const api = {
   audit: () => getJson<{ events: TimelineEvent[] }>("/api/audit?limit=100"),
   cancelTask: (taskId: string) => postJson(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { reason: "console cancel" }),
   retryTask: (taskId: string) => postJson(`/api/tasks/${encodeURIComponent(taskId)}/retry`, {}),
+  dismissTask: (taskId: string) => postJson(`/api/tasks/${encodeURIComponent(taskId)}/dismiss`, { reason: "dismissed from console process card" }),
   resolveAlert: (alertId: string) => postJson(`/api/alerts/${encodeURIComponent(alertId)}/resolve`, {})
 };
 

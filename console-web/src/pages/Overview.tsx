@@ -1,16 +1,35 @@
 import { AlertTriangle } from "lucide-react";
 import { useMemo, useState } from "react";
-import { ConsoleSnapshot } from "../api/client";
+import { api, ConsoleSnapshot } from "../api/client";
 import { HealthMetricKey, HealthStrip } from "../components/HealthStrip";
 import { LiveTaskTable } from "../components/LiveTaskTable";
 import { ProcessCards } from "../components/ProcessCards";
 
-export function Overview({ snapshot, onSelectTask }: { snapshot: ConsoleSnapshot; onSelectTask: (taskId: string) => void }) {
+export function Overview({
+  snapshot,
+  onSelectTask,
+  onRefresh
+}: {
+  snapshot: ConsoleSnapshot;
+  onSelectTask: (taskId: string) => void;
+  onRefresh: () => Promise<void>;
+}) {
   const [selectedMetric, setSelectedMetric] = useState<HealthMetricKey>("running");
+  const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
   const selectedTasks = useMemo(
     () => filterTasks(snapshot.tasks, selectedMetric),
     [snapshot, selectedMetric]
   );
+
+  const dismissTask = async (taskId: string) => {
+    setBusyTaskId(taskId);
+    try {
+      await api.dismissTask(taskId);
+      await onRefresh();
+    } finally {
+      setBusyTaskId(null);
+    }
+  };
 
   return (
     <>
@@ -20,6 +39,11 @@ export function Overview({ snapshot, onSelectTask }: { snapshot: ConsoleSnapshot
         tasks={selectedTasks}
         alerts={snapshot.alerts}
         onSelectTask={onSelectTask}
+        onDismissTask={(taskId) => {
+          if (busyTaskId !== taskId) {
+            void dismissTask(taskId);
+          }
+        }}
       />
       {snapshot.alerts.length > 0 && (
         <section className="alerts">

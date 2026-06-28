@@ -38,9 +38,11 @@ class ConsoleQueries:
         alerts = [alert_view(row) for row in self.db.list_system_alerts(status="open", limit=50)]
         heartbeats = [heartbeat_view(row) for row in self.db.list_worker_heartbeats(limit=50)]
         live_task_ids = _live_task_ids(heartbeats)
+        dismissed = self.db.list_console_dismissed_task_ids()
         tasks = [
             _with_runtime_liveness(task_summary(row), live_task_ids)
             for row in self.db.list_tasks(limit=100)
+            if row.get("task_id") not in dismissed
         ]
         metrics = self.metrics_summary()
         counts = _status_counts(tasks)
@@ -67,7 +69,14 @@ class ConsoleQueries:
         project_id: str | None = None,
         limit: int = 100,
     ) -> dict[str, Any]:
-        return {"tasks": [task_summary(row) for row in self.db.list_tasks(status, project_id, limit)]}
+        dismissed = self.db.list_console_dismissed_task_ids()
+        return {
+            "tasks": [
+                task_summary(row)
+                for row in self.db.list_tasks(status, project_id, limit)
+                if row.get("task_id") not in dismissed
+            ]
+        }
 
     def task_detail(self, task_id: str) -> dict[str, Any]:
         task = self.db.get_task(task_id)

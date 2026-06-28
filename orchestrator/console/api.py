@@ -14,6 +14,7 @@ from .redaction import redact
 ALLOWED_ACTIONS = {"cancel", "retry", "approve", "reject", "resolve_alert"}
 RETRYABLE_STATES = {"FAILED", "FAILED_FINAL", "CANCELLED", "DONE_WITH_BLOCK", "COMPLETED_WITH_PATCH"}
 APPROVAL_STATES = {"HARD_APPROVAL_WAITING", "SOFT_APPROVAL_WAITING", "NEEDS_USER", "BLOCKED"}
+DISMISSIBLE_STATES = {"FAILED", "FAILED_FINAL"} | APPROVAL_STATES
 
 
 class ConsoleAPI:
@@ -57,6 +58,9 @@ class ConsoleAPI:
         if "/retry" in path and path.startswith("/api/tasks/"):
             task_id = path.split("/")[3]
             return self._retry(task_id)
+        if "/dismiss" in path and path.startswith("/api/tasks/"):
+            task_id = path.split("/")[3]
+            return self._dismiss(task_id, str(payload.get("reason") or "console dismissed"))
         if path.startswith("/api/approvals/") and path.endswith("/approve"):
             return self._approval(path.split("/")[3], "approve", payload)
         if path.startswith("/api/approvals/") and path.endswith("/reject"):
@@ -123,6 +127,24 @@ class ConsoleAPI:
         )
         return (200 if ok else 404), "application/json", {"status": "resolved" if ok else "NOT_FOUND", "alert_id": alert_id}
 
+    def _dismiss(self, task_id: str, reason: str) -> tuple[int, str, Any]:
+        task = self.service.db.get_task(task_id)
+        if not task:
+            return 404, "application/json", {"status": "NOT_FOUND", "task_id": task_id}
+        if str(task["status"]) not in DISMISSIBLE_STATES:
+            return 409, "application/json", {"status": "INVALID_STATE", "task_id": task_id, "action": "dismiss"}
+        now = __import__("time").strftime("%Y-%m-%dT%H:%M:%SZ", __import__("time").gmtime())
+        self.service.db.dismiss_console_task(task_id, now, reason=reason)
+        self.service.db.append_event(
+            task_id,
+            "console.task_dismissed",
+            task["status"],
+            task["status"],
+            {"reason": reason},
+            at=now,
+        )
+        return 200, "application/json", {"status": "dismissed", "task_id": task_id}
+
 
 def json_response(status: int, payload: Any) -> bytes:
     return json.dumps(redact(payload), ensure_ascii=False, indent=2).encode("utf-8")
@@ -143,4 +165,3 @@ def _int(value: str | None, default: int) -> int:
         return int(value) if value is not None else default
     except ValueError:
         return default
-

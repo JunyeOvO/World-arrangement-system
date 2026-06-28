@@ -290,6 +290,7 @@ pre {
   justify-content: space-between;
   gap: 10px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .process-card strong {
@@ -325,6 +326,18 @@ pre {
   gap: 5px;
   padding: 6px 8px;
   font-size: 12px;
+}
+
+.process-card-actions {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.process-card button.delete-action {
+  color: #9f1d2f;
+  border-color: #efc4cb;
+  background: #fff7f8;
 }
 
 .alert-card {
