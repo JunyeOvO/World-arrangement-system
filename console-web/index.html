@@ -6,8 +6,17 @@
     <title>World Console</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div style="font-family: system-ui, sans-serif; padding: 24px; color: #1d2433;">
+        World Console is a Vite app. Use http://127.0.0.1:8765/ after starting
+        `uv run ai-dispatcher serve-console --host 127.0.0.1 --port 8765`.
+      </div>
+    </div>
+    <script>
+      if (window.location.protocol === "file:") {
+        window.location.replace("http://127.0.0.1:8765/");
+      }
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
