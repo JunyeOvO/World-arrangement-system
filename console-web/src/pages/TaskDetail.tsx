@@ -60,11 +60,11 @@ export function TaskDetail({ taskId }: { taskId: string }) {
         <h2>Output</h2>
         {output ? <MarkdownPreview source={output} /> : <p>{outputError || "Loading output..."}</p>}
       </section>
-      <section className="panel">
+      <section className="panel json-window-panel">
         <h2>Verify</h2>
         <pre>{JSON.stringify(detail.verify ?? {}, null, 2)}</pre>
       </section>
-      <section className="panel">
+      <section className="panel json-window-panel">
         <h2>Review</h2>
         <pre>{JSON.stringify(detail.review ?? {}, null, 2)}</pre>
       </section>

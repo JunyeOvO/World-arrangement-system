@@ -233,19 +233,22 @@ small {
 
 .timeline-panel,
 .output-panel,
+.json-window-panel,
 .artifacts-panel {
   min-height: 0;
 }
 
 .timeline-panel,
-.output-panel {
+.output-panel,
+.json-window-panel {
   height: 620px;
   display: flex;
   flex-direction: column;
 }
 
 .timeline-panel h2,
-.output-panel h2 {
+.output-panel h2,
+.json-window-panel h2 {
   flex: 0 0 auto;
 }
 
@@ -456,6 +459,13 @@ pre {
   border-radius: 6px;
   padding: 12px;
   font-size: 12px;
+}
+
+.json-window-panel pre {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
 }
 
 .markdown-preview {
