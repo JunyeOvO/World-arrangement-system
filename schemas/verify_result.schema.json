@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VerifyResult",
+  "type": "object",
+  "required": [
+    "tests_passed",
+    "build_passed",
+    "forbidden_allowed",
+    "commands",
+    "changed_files",
+    "diff_path",
+    "finished_at"
+  ],
+  "properties": {
+    "tests_passed": { "type": "boolean" },
+    "build_passed": { "type": "boolean" },
+    "forbidden_allowed": { "type": "boolean" },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "command", "returncode", "duration_sec", "log_path"],
+        "properties": {
+          "kind": { "type": "string", "enum": ["test", "build", "verify"] },
+          "command": { "type": "string" },
+          "returncode": { "type": "integer" },
+          "duration_sec": { "type": "number" },
+          "log_path": { "type": "string" }
+        }
+      }
+    },
+    "changed_files": { "type": "array", "items": { "type": "string" } },
+    "diff_path": { "type": ["string", "null"] },
+    "finished_at": { "type": "string" }
+  }
+}

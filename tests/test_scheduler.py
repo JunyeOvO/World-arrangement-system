@@ -203,3 +203,53 @@ def test_get_task_control_reads_control_files(tmp_path, monkeypatch):
     assert result["task_status"] == "EXECUTING"
     assert result["process"]["pid"] == 123
     assert result["heartbeat"]["status"] == "running"
+
+
+def test_scheduler_writes_verify_and_metrics_artifacts(tmp_path, monkeypatch):
+    import subprocess
+    from pathlib import Path
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "x@y"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "x"], cwd=repo, check=True)
+    (repo / "README.md").write_text("hi\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "models.yaml").write_text(
+        "models:\n  deepseek_pro:\n    provider: deepseek\n    adapter: claude_code\n"
+        "    model: deepseek-v4-pro\n    worker: claude_code\n",
+        encoding="utf-8",
+    )
+    (home / "policies.yaml").write_text(
+        Path("config/policies.yaml.example").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (home / "projects.yaml").write_text(
+        "projects:\n  generic:\n    project_id: generic\n    name: Generic\n"
+        f"    repo: {repo}\n    stack: [python]\n    test_commands: []\n    build_commands: []\n"
+        "    forbidden_paths: []\n    default_worker: claude_code\n"
+        "    default_model: deepseek_pro\n    allow_auto_pr: false\n    allow_remote_push: false\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AI_ORCHESTRATOR_HOME", str(home))
+    monkeypatch.setattr("orchestrator.scheduler._task_requires_diff", lambda task: False)
+
+    service = OrchestratorService()
+    result = service.submit_task("generic", "analyze repository", "low", True, False, dry_run=True)
+    run_dir = Path(result["run_dir"])
+
+    assert service.get_task_status(result["task_id"])["status"] == "COMPLETED_WITH_PATCH"
+    verify_payload = json.loads((run_dir / "verify" / "verify.json").read_text(encoding="utf-8"))
+    metrics_payload = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+    db_metrics = service.db.list_task_metrics(result["task_id"])
+
+    assert verify_payload["tests_passed"] is True
+    assert verify_payload["build_passed"] is True
+    assert verify_payload["forbidden_allowed"] is True
+    assert metrics_payload["task_id"] == result["task_id"]
+    assert db_metrics[0]["model"] == "deepseek_pro"

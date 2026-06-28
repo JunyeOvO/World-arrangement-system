@@ -48,6 +48,27 @@ CREATE TABLE IF NOT EXISTS task_attempts (
   error_code TEXT
 );
 
+CREATE TABLE IF NOT EXISTS task_metrics (
+  task_id TEXT,
+  attempt_no INTEGER,
+  worker TEXT,
+  model TEXT,
+  status TEXT,
+  failure_reason TEXT,
+  total_cost_usd REAL,
+  duration_ms INTEGER,
+  duration_api_ms INTEGER,
+  num_turns INTEGER,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  cache_read_input_tokens INTEGER,
+  changed_files_count INTEGER,
+  build_passed BOOLEAN,
+  review_approved BOOLEAN,
+  created_at TEXT,
+  PRIMARY KEY(task_id, attempt_no)
+);
+
 CREATE TABLE IF NOT EXISTS approval_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id TEXT NOT NULL,
@@ -210,6 +231,66 @@ class TaskDB:
         with self.connect() as con:
             rows = con.execute(
                 "SELECT * FROM task_events WHERE task_id=? ORDER BY id ASC", [task_id]
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def upsert_task_metrics(self, row: dict[str, Any]) -> None:
+        self.init()
+        cols = [
+            "task_id",
+            "attempt_no",
+            "worker",
+            "model",
+            "status",
+            "failure_reason",
+            "total_cost_usd",
+            "duration_ms",
+            "duration_api_ms",
+            "num_turns",
+            "input_tokens",
+            "output_tokens",
+            "cache_read_input_tokens",
+            "changed_files_count",
+            "build_passed",
+            "review_approved",
+            "created_at",
+        ]
+        values = [row.get(c) for c in cols]
+        assignments = ", ".join(f"{c}=excluded.{c}" for c in cols[2:])
+        with self.connect() as con:
+            con.execute(
+                f"""
+                INSERT INTO task_metrics ({','.join(cols)})
+                VALUES ({','.join(['?'] * len(cols))})
+                ON CONFLICT(task_id, attempt_no) DO UPDATE SET {assignments}
+                """,
+                values,
+            )
+
+    def list_task_metrics(self, task_id: str) -> list[dict[str, Any]]:
+        self.init()
+        with self.connect() as con:
+            rows = con.execute(
+                "SELECT * FROM task_metrics WHERE task_id=? ORDER BY attempt_no ASC",
+                [task_id],
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def model_metrics_summary(self) -> list[dict[str, Any]]:
+        self.init()
+        with self.connect() as con:
+            rows = con.execute(
+                """
+                SELECT
+                  model,
+                  worker,
+                  COUNT(*) AS attempts,
+                  AVG(total_cost_usd) AS avg_cost_usd,
+                  AVG(CASE WHEN status IN ('success', 'COMPLETED_WITH_PATCH', 'PR_CREATED', 'DONE') THEN 1.0 ELSE 0.0 END) AS success_rate
+                FROM task_metrics
+                GROUP BY model, worker
+                ORDER BY attempts DESC, model ASC
+                """
             ).fetchall()
         return [dict(row) for row in rows]
 

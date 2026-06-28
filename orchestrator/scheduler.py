@@ -10,6 +10,13 @@ from .artifacts import ArtifactStore
 from .config import code_root, ensure_runtime_dirs
 from .constants import DEFAULT_CLAUDE_CMD, DEFAULT_OPENCODE_CMD
 from .db import TaskDB
+from .failure_classifier import (
+    FailureClassification,
+    classify_review_failure,
+    classify_verify_failure,
+    classify_worker_failure,
+)
+from .metrics import collect_task_metrics, write_metrics
 from .pr import create_pr_or_patch
 from .project_registry import detect_project, load_projects
 from .project_commands import (
@@ -29,7 +36,7 @@ from .router import plan_route
 from .agent_llm import agent_llm_name
 from .llm_capability import capability_profile, normalize_capability_tier
 from .runtime_store import RuntimeStore
-from .verifier import verify
+from .verifier import verify, write_verify_result
 from .agents_md import inject_agents_md
 from .worktree import prepare_worktree
 from .approval_graph import ApprovalGraph, ApprovalMode, _classify_task_type
@@ -263,7 +270,7 @@ class OrchestratorService:
             return {"status": "NOT_FOUND", "task_id": task_id}
         index = self.artifacts.index(task_id)
         result: dict[str, Any] = {"task": task, "artifacts": index}
-        for key in ["final.md", "review/review.json", "verify/diff.patch", "result.json"]:
+        for key in ["final.md", "review/review.json", "verify/verify.json", "verify/diff.patch", "metrics.json", "result.json"]:
             path = index.get(key)
             if path:
                 text = Path(path).read_text(encoding="utf-8", errors="replace")
@@ -494,10 +501,13 @@ class OrchestratorService:
         final_result = None
         verify_result = None
         review = None
+        last_failure: FailureClassification | None = None
+        last_attempt: dict[str, Any] | None = None
 
         for idx, attempt in enumerate(retry_chain):
             attempt_dir = Path(task["run_dir"]) / "attempts" / f"{idx + 1:02d}"
             attempt_dir.mkdir(parents=True, exist_ok=True)
+            attempt["attempt_no"] = idx + 1
             attempt["started_at"] = _now()
 
             worker = WORKERS.get(attempt["worker"], ClaudeCodeWorker())
@@ -525,39 +535,97 @@ class OrchestratorService:
             attempt["finished_at"] = _now()
             attempt["status"] = worker_result.status
             attempt["summary"] = worker_result.summary
+            failure = None
+            if worker_result.status != "success":
+                failure = classify_worker_failure(
+                    status=worker_result.status,
+                    summary=worker_result.summary,
+                    risks=worker_result.risks,
+                    changed_files=worker_result.changed_files,
+                    stdout_path=worker_result.stdout_path,
+                    stderr_path=worker_result.stderr_path,
+                )
+                attempt["failure_reason"] = failure.failure_reason
+                attempt["failure"] = failure.to_dict()
+                last_failure = failure
+                last_attempt = attempt
             self.artifacts.write_json(task_id, f"attempts/{idx + 1:02d}/result.json", attempt)
             self.artifacts.write_json(task_id, "result.json", worker_result.__dict__)
+            self._write_attempt_metrics(task_id, idx + 1, attempt, worker_result, failure)
 
             if worker_result.status == "success":
                 if not dry_run and _task_requires_diff(task) and not worker_result.changed_files:
                     worker_result.status = "failed"
                     worker_result.summary = f"{worker.name} completed without producing a diff"
                     worker_result.risks.append("worker_no_diff")
+                    failure = classify_worker_failure(
+                        status=worker_result.status,
+                        summary=worker_result.summary,
+                        risks=worker_result.risks,
+                        changed_files=worker_result.changed_files,
+                        stdout_path=worker_result.stdout_path,
+                        stderr_path=worker_result.stderr_path,
+                    )
+                    last_failure = failure
+                    last_attempt = attempt
                     self.artifacts.write_json(task_id, "result.json", worker_result.__dict__)
-                    self._set_status(task_id, "RETRYING" if idx + 1 < len(retry_chain) else "FAILED_FINAL", "worker_no_diff", worker_result.__dict__)
+                    self._write_attempt_metrics(task_id, idx + 1, attempt, worker_result, failure)
+                    self._set_status(
+                        task_id,
+                        "RETRYING" if idx + 1 < len(retry_chain) else "FAILED_FINAL",
+                        "worker_no_diff",
+                        {**worker_result.__dict__, "failure": failure.to_dict()},
+                    )
                     if idx + 1 < len(retry_chain):
                         continue
                     self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], rollback=True)
                     return
                 final_result = worker_result
+                last_attempt = attempt
                 break
 
             if _should_recover_failed_worker_diff(worker_result):
                 worker_result.risks.append("scheduler_recover_failed_worker_diff")
                 self.artifacts.write_json(task_id, "result.json", worker_result.__dict__)
-                self._set_status(task_id, "EXECUTING", "worker_failed_with_diff", worker_result.__dict__)
+                self._set_status(
+                    task_id,
+                    "EXECUTING",
+                    "worker_failed_with_diff",
+                    {**worker_result.__dict__, "failure": failure.to_dict() if failure else None},
+                )
                 final_result = worker_result
+                last_attempt = attempt
                 break
 
             if worker_result.status == "blocked":
                 # Non-retryable: safety violation, forbidden path, GLM rejection
-                self._set_status(task_id, "BLOCKED", "worker_blocked", worker_result.__dict__)
+                self._set_status(
+                    task_id,
+                    "BLOCKED",
+                    "worker_blocked",
+                    {**worker_result.__dict__, "failure": failure.to_dict() if failure else None},
+                )
                 self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], incident=True)
                 return
 
             # Retryable failure — try next in chain
             if worker_result.status == "cancelled":
-                self._set_status(task_id, "CANCELLED", "worker_cancelled", worker_result.__dict__)
+                self._set_status(
+                    task_id,
+                    "CANCELLED",
+                    "worker_cancelled",
+                    {**worker_result.__dict__, "failure": failure.to_dict() if failure else None},
+                )
+                return
+
+            if failure and not failure.retryable:
+                self._set_status(
+                    task_id,
+                    "FAILED_FINAL",
+                    "worker_non_retryable_failure",
+                    {"failure_reason": failure.failure_reason, "failure": failure.to_dict(), "attempt": idx + 1},
+                )
+                self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], incident=True)
                 return
 
             if idx + 1 < len(retry_chain):
@@ -565,13 +633,23 @@ class OrchestratorService:
                 self._set_status(task_id, "RETRYING", "worker_retry", {
                     "failed_attempt": idx + 1, "failed_worker": attempt["worker"],
                     "next_worker": next_attempt["worker"], "next_model": next_attempt["model"],
-                    "reason": attempt.get("reason", "worker_failed"),
+                    "reason": failure.failure_reason if failure else attempt.get("reason", "worker_failed"),
+                    "failure": failure.to_dict() if failure else None,
                 })
                 continue
 
         # ── All attempts exhausted ──
         if not final_result:
-            self._set_status(task_id, "FAILED_FINAL", "all_attempts_failed", {"total_attempts": len(retry_chain)})
+            payload = {"total_attempts": len(retry_chain)}
+            if last_failure:
+                payload.update({"failure_reason": last_failure.failure_reason, "failure": last_failure.to_dict()})
+            if last_attempt:
+                payload["last_attempt"] = {
+                    "worker": last_attempt.get("worker"),
+                    "model": last_attempt.get("model"),
+                    "attempt": last_attempt.get("attempt_no"),
+                }
+            self._set_status(task_id, "FAILED_FINAL", "all_attempts_failed", payload)
             self._record_policy_learning(task, project, success=False, worker=retry_chain[-1]["worker"], model=retry_chain[-1]["model"], rollback=True)
             return
 
@@ -583,11 +661,29 @@ class OrchestratorService:
             Path(task["run_dir"]) / "verify",
         ) if not dry_run else _dry_verify(task)
         forbidden = check_changed_files(verify_result.changed_files, task.get("forbidden_paths"))
+        verify_result.forbidden_allowed = forbidden.allowed
+        write_verify_result(verify_result, Path(task["run_dir"]) / "verify" / "verify.json")
         self.artifacts.write_json(task_id, "verify/changed_files.json", verify_result.changed_files)
 
         if not verify_result.tests_passed or not verify_result.build_passed or not forbidden.allowed:
+            failure = classify_verify_failure(
+                tests_passed=verify_result.tests_passed,
+                build_passed=verify_result.build_passed,
+                forbidden_allowed=forbidden.allowed,
+                evidence=forbidden.blocking_issues,
+            )
+            if last_attempt:
+                self._write_attempt_metrics(
+                    task_id,
+                    int(last_attempt.get("attempt_no", 1)),
+                    last_attempt,
+                    final_result,
+                    failure,
+                    build_passed=verify_result.build_passed,
+                )
             self._set_status(task_id, "FAILED_FINAL", "verify_failed",
-                             {"verify": verify_result.__dict__, "forbidden": forbidden.__dict__})
+                             {"failure_reason": failure.failure_reason, "failure": failure.to_dict(),
+                              "verify": verify_result.to_dict(), "forbidden": forbidden.__dict__})
             self._record_policy_learning(task, project, success=False, worker=route["selected_worker"], model=route["selected_model"])
             return
 
@@ -600,9 +696,31 @@ class OrchestratorService:
             Path(task["run_dir"]) / "review" / "review.json",
         )
         if not review.get("approved"):
-            self._set_status(task_id, "FAILED_FINAL", "review_failed", review)
+            failure = classify_review_failure(review)
+            if last_attempt:
+                self._write_attempt_metrics(
+                    task_id,
+                    int(last_attempt.get("attempt_no", 1)),
+                    last_attempt,
+                    final_result,
+                    failure,
+                    build_passed=verify_result.build_passed,
+                    review_approved=False,
+                )
+            self._set_status(task_id, "FAILED_FINAL", "review_failed",
+                             {"failure_reason": failure.failure_reason, "failure": failure.to_dict(), "review": review})
             self._record_policy_learning(task, project, success=False, worker=route["selected_worker"], model=route["selected_model"])
             return
+        if last_attempt:
+            self._write_attempt_metrics(
+                task_id,
+                int(last_attempt.get("attempt_no", 1)),
+                last_attempt,
+                final_result,
+                None,
+                build_passed=verify_result.build_passed,
+                review_approved=True,
+            )
 
         # ── Policy Learning ──
         self._set_status(task_id, "POLICY_LEARNING", "policy_learning", {})
@@ -616,7 +734,7 @@ class OrchestratorService:
 
         # ── PR / Patch ──
         self._set_status(task_id, "PLANNED", "review_passed", review)
-        final = _final_md(task, route, final_result.__dict__, verify_result.__dict__, review)
+        final = _final_md(task, route, final_result.__dict__, verify_result.to_dict(), review)
         self.artifacts.write_text(task_id, "final.md", final)
 
         allow_push = project.get("allow_remote_push", False)
@@ -699,6 +817,33 @@ class OrchestratorService:
         old_status = old["status"] if old else None
         self.db.update_task(task_id, status=status, updated_at=_now())
         self.db.append_event(task_id, event_type, old_status, status, payload)
+
+    def _write_attempt_metrics(
+        self,
+        task_id: str,
+        attempt_no: int,
+        attempt: dict[str, Any],
+        worker_result: Any,
+        failure: FailureClassification | None,
+        build_passed: bool | None = None,
+        review_approved: bool | None = None,
+    ) -> None:
+        metrics = collect_task_metrics(
+            task_id=task_id,
+            attempt_no=attempt_no,
+            worker=str(attempt.get("worker", "")),
+            model=str(attempt.get("model", "")),
+            status=str(getattr(worker_result, "status", "")),
+            stream_path=getattr(worker_result, "stdout_path", None),
+            changed_files_count=len(getattr(worker_result, "changed_files", []) or []),
+            failure_reason=failure.failure_reason if failure else None,
+            build_passed=build_passed,
+            review_approved=review_approved,
+        )
+        metrics_path = Path(self.db.get_task(task_id)["run_dir"]) / "attempts" / f"{attempt_no:02d}" / "metrics.json"
+        write_metrics(metrics, metrics_path)
+        write_metrics(metrics, Path(self.db.get_task(task_id)["run_dir"]) / "metrics.json")
+        self.db.upsert_task_metrics(metrics.to_dict())
 
 
 def _now() -> str:
@@ -960,7 +1105,7 @@ def _dry_verify(task: dict[str, Any]):
     diff_path = str(Path(task["run_dir"]) / "verify" / "diff.patch")
     Path(diff_path).parent.mkdir(parents=True, exist_ok=True)
     Path(diff_path).write_text("", encoding="utf-8")
-    return VerifyResult(True, True, [], [], diff_path)
+    return VerifyResult(True, True, [], [], diff_path, True, _now())
 
 
 def _final_md(task: dict[str, Any], route: dict[str, Any], worker: dict[str, Any], verify_result: dict[str, Any], review: dict[str, Any]) -> str:
