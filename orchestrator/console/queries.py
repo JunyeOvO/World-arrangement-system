@@ -38,10 +38,12 @@ class ConsoleQueries:
         alerts = [alert_view(row) for row in self.db.list_system_alerts(status="open", limit=50)]
         heartbeats = [heartbeat_view(row) for row in self.db.list_worker_heartbeats(limit=50)]
         live_task_ids = _live_task_ids(heartbeats)
+        raw_tasks = self.db.list_tasks(limit=100)
+        _auto_dismiss_superseded_stale_running_tasks(self.db, raw_tasks, live_task_ids)
         dismissed = self.db.list_console_dismissed_task_ids()
         tasks = [
             _with_runtime_liveness(task_summary(row), live_task_ids)
-            for row in self.db.list_tasks(limit=100)
+            for row in raw_tasks
             if row.get("task_id") not in dismissed
         ]
         metrics = self.metrics_summary()
@@ -199,6 +201,12 @@ def _with_runtime_liveness(task: dict[str, Any], live_task_ids: set[str]) -> dic
         "live": live,
         "stale": status in RUNNING and not live,
     }
+    if status in RUNNING and not live:
+        task["display_status"] = "STALE_EXECUTING"
+        task["status_note"] = "No fresh worker heartbeat; raw task status is stale."
+    else:
+        task["display_status"] = status
+        task["status_note"] = ""
     return task
 
 
@@ -228,6 +236,46 @@ def _parse_ts(value: Any) -> float | None:
         return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
     except ValueError:
         return None
+
+
+def _auto_dismiss_superseded_stale_running_tasks(
+    db: TaskDB,
+    tasks: list[dict[str, Any]],
+    live_task_ids: set[str],
+) -> None:
+    dismissed = db.list_console_dismissed_task_ids()
+    latest_success_by_project: dict[str, str] = {}
+    for task in tasks:
+        status = str(task.get("status") or "")
+        if status not in TERMINAL_SUCCESS:
+            continue
+        project_id = str(task.get("project_id") or "")
+        updated_at = str(task.get("updated_at") or "")
+        if updated_at >= latest_success_by_project.get(project_id, ""):
+            latest_success_by_project[project_id] = updated_at
+
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    for task in tasks:
+        task_id = str(task.get("task_id") or "")
+        if not task_id or task_id in dismissed or task_id in live_task_ids:
+            continue
+        status = str(task.get("status") or "")
+        if status not in RUNNING:
+            continue
+        project_id = str(task.get("project_id") or "")
+        completed_at = latest_success_by_project.get(project_id)
+        if not completed_at or completed_at < str(task.get("updated_at") or ""):
+            continue
+        reason = "superseded by completed task in same project"
+        db.dismiss_console_task(task_id, now, reason=reason)
+        db.append_event(
+            task_id,
+            "console.task_auto_dismissed",
+            status,
+            status,
+            {"reason": reason, "completed_at": completed_at},
+            at=now,
+        )
 
 
 def _content_type(relative: str) -> str:

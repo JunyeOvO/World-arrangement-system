@@ -15,7 +15,12 @@ export function LiveTaskTable({ tasks, onSelect }: { tasks: TaskSummary[]; onSel
         <tbody>
           {tasks.map((task) => (
             <tr key={task.task_id} onClick={() => onSelect(task.task_id)}>
-              <td><span className={`status ${task.status.toLowerCase()}`}>{task.status}</span></td>
+              <td>
+                <span className={`status ${(task.display_status || task.status).toLowerCase()}`}>
+                  {task.display_status || task.status}
+                </span>
+                {task.status_note && <small>{task.status_note}</small>}
+              </td>
               <td>
                 <strong>{task.task_id}</strong>
                 <small>{task.user_goal}</small>
@@ -29,4 +34,3 @@ export function LiveTaskTable({ tasks, onSelect }: { tasks: TaskSummary[]; onSel
     </div>
   );
 }
-

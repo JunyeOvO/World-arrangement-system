@@ -34,8 +34,12 @@ class StubService:
         return {"status": "rejected", "task_id": task_id}
 
 
-def _create_task(service: StubService, status: str = "EXECUTING") -> str:
-    task_id = "task_console"
+def _create_task(
+    service: StubService,
+    status: str = "EXECUTING",
+    task_id: str = "task_console",
+    updated_at: str = "2026-06-28T00:00:00Z",
+) -> str:
     run_dir = service.artifacts.run_dir(task_id)
     service.db.create_task({
         "task_id": task_id,
@@ -44,7 +48,7 @@ def _create_task(service: StubService, status: str = "EXECUTING") -> str:
         "user_goal": "ship console",
         "status": status,
         "created_at": "2026-06-28T00:00:00Z",
-        "updated_at": "2026-06-28T00:00:00Z",
+        "updated_at": updated_at,
         "route_worker": "opencode",
         "route_model": "glm",
         "route_variant": "high",
@@ -80,6 +84,32 @@ def test_console_snapshot_does_not_count_stale_executing_without_heartbeat(tmp_p
     assert payload["health"]["running"] == 0
     task = next(item for item in payload["tasks"] if item["task_id"] == task_id)
     assert task["runtime"] == {"live": False, "stale": True}
+    assert task["display_status"] == "STALE_EXECUTING"
+    assert "No fresh worker heartbeat" in task["status_note"]
+
+
+def test_console_snapshot_auto_dismisses_stale_executing_when_project_completed(tmp_path: Path):
+    service = StubService(tmp_path)
+    stale_task_id = _create_task(
+        service,
+        status="EXECUTING",
+        task_id="task_stale",
+        updated_at="2026-06-28T00:00:00Z",
+    )
+    _create_task(
+        service,
+        status="COMPLETED_WITH_PATCH",
+        task_id="task_completed",
+        updated_at="2026-06-28T00:10:00Z",
+    )
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    status, _, payload = api.handle_get("/api/console/snapshot")
+
+    assert status == 200
+    assert all(task["task_id"] != stale_task_id for task in payload["tasks"])
+    assert service.db.list_console_dismissed_task_ids() == {stale_task_id}
+    assert service.db.list_events(stale_task_id)[-1]["event_type"] == "console.task_auto_dismissed"
 
 
 def test_console_snapshot_counts_executing_with_fresh_heartbeat(tmp_path: Path):
@@ -101,6 +131,8 @@ def test_console_snapshot_counts_executing_with_fresh_heartbeat(tmp_path: Path):
     assert payload["health"]["running"] == 1
     task = next(item for item in payload["tasks"] if item["task_id"] == task_id)
     assert task["runtime"] == {"live": True, "stale": False}
+    assert task["display_status"] == "EXECUTING"
+    assert task["status_note"] == ""
 
 
 def test_task_detail_includes_lifecycle_and_artifacts(tmp_path: Path):

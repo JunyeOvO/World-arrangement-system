@@ -184,6 +184,11 @@ small {
   background: #eaf7ee;
 }
 
+.status.stale_executing {
+  color: #8a4b0f;
+  background: #fff4df;
+}
+
 .alerts {
   display: flex;
   flex-direction: column;

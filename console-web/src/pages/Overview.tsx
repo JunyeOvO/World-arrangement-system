@@ -59,7 +59,7 @@ export function Overview({
         </section>
       )}
       <section className="panel">
-        <h2>Live Tasks</h2>
+        <h2>Recent Tasks</h2>
         <LiveTaskTable tasks={snapshot.tasks} onSelect={onSelectTask} />
       </section>
     </>

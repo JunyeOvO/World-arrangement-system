@@ -57,11 +57,14 @@ export function ProcessCards({
           {tasks.map((task) => (
             <article className="process-card" key={task.task_id}>
               <div className="process-card-top">
-                <span className={`status ${task.status.toLowerCase()}`}>{task.status}</span>
+                <span className={`status ${(task.display_status || task.status).toLowerCase()}`}>
+                  {task.display_status || task.status}
+                </span>
                 <small>{task.runtime?.stale ? "stale status" : task.project_id}</small>
               </div>
               <strong>{task.user_goal || "Codex task"}</strong>
               <p>{task.task_id}</p>
+              {task.status_note && <p>{task.status_note}</p>}
               <dl>
                 <dt>Worker</dt>
                 <dd>{task.route.worker || "pending"}</dd>

@@ -19,6 +19,8 @@ export type TaskSummary = {
   project_id: string;
   user_goal: string;
   status: string;
+  display_status?: string;
+  status_note?: string;
   updated_at: string;
   route: { worker?: string; model?: string; variant?: string };
   runtime?: { live: boolean; stale: boolean };
