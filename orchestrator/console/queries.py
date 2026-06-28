@@ -151,6 +151,45 @@ class ConsoleQueries:
     def model_metrics(self) -> list[dict[str, Any]]:
         return [metric_view(row) for row in self.db.model_metrics_summary()]
 
+    def metrics_usage(self, limit: int = 200) -> dict[str, Any]:
+        rows = [metric_view(row) for row in self.db.list_recent_task_metrics(limit=limit)]
+        cost_by_day_model: dict[tuple[str, str], float] = {}
+        dates: set[str] = set()
+        models: set[str] = set()
+        calls: list[dict[str, Any]] = []
+        for row in rows:
+            created_at = str(row.get("created_at") or "")
+            date = _metric_date(created_at)
+            model = str(row.get("model") or "unknown")
+            cost = float(row.get("total_cost_usd") or 0)
+            dates.add(date)
+            models.add(model)
+            cost_by_day_model[(date, model)] = cost_by_day_model.get((date, model), 0.0) + cost
+            calls.append({
+                "created_at": created_at,
+                "date": date,
+                "model": model,
+                "worker": row.get("worker") or "",
+                "input_tokens": int(row.get("input_tokens") or 0),
+                "output_tokens": int(row.get("output_tokens") or 0),
+                "cache_read_input_tokens": int(row.get("cache_read_input_tokens") or 0),
+                "cost_usd": round(cost, 6),
+                "task_id": row.get("task_id") or "",
+                "attempt_no": row.get("attempt_no"),
+                "session": _session_label(str(row.get("task_id") or "")),
+            })
+        return {
+            "cost_series": {
+                "dates": sorted(dates),
+                "models": sorted(models),
+                "rows": [
+                    {"date": date, "model": model, "cost_usd": round(cost, 6)}
+                    for (date, model), cost in sorted(cost_by_day_model.items())
+                ],
+            },
+            "calls": calls,
+        }
+
     def audit(self, task_id: str | None = None, action: str | None = None, limit: int = 100) -> dict[str, Any]:
         return {"events": [event_view(row) for row in self.db.list_audit_events(task_id, action, limit)]}
 
@@ -236,6 +275,16 @@ def _parse_ts(value: Any) -> float | None:
         return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
     except ValueError:
         return None
+
+
+def _metric_date(created_at: str) -> str:
+    if not created_at:
+        return "unknown"
+    return created_at[:10]
+
+
+def _session_label(task_id: str) -> str:
+    return task_id[-8:] if len(task_id) > 8 else task_id
 
 
 def _auto_dismiss_superseded_stale_running_tasks(

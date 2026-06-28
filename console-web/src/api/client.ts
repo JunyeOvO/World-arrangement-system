@@ -62,6 +62,27 @@ export type ModelMetric = {
   success_rate?: number;
 };
 
+export type MetricsUsage = {
+  cost_series: {
+    dates: string[];
+    models: string[];
+    rows: Array<{ date: string; model: string; cost_usd: number }>;
+  };
+  calls: Array<{
+    created_at: string;
+    date: string;
+    model: string;
+    worker: string;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens: number;
+    cost_usd: number;
+    task_id: string;
+    attempt_no: number;
+    session: string;
+  }>;
+};
+
 export type Alert = {
   alert_id: string;
   severity: string;
@@ -83,6 +104,7 @@ export const api = {
   snapshot: () => getJson<ConsoleSnapshot>("/api/console/snapshot"),
   taskDetail: (taskId: string) => getJson<TaskDetail>(`/api/tasks/${encodeURIComponent(taskId)}`),
   metrics: () => getJson<MetricsSummary>("/api/metrics/summary"),
+  metricsUsage: () => getJson<MetricsUsage>("/api/metrics/usage?limit=200"),
   models: () => getJson<{ models: ModelMetric[] }>("/api/metrics/models"),
   audit: () => getJson<{ events: TimelineEvent[] }>("/api/audit?limit=100"),
   cancelTask: (taskId: string) => postJson(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { reason: "console cancel" }),

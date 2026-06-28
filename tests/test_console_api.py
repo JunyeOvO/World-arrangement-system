@@ -230,3 +230,40 @@ def test_dismiss_rejects_non_failed_non_approval_task(tmp_path: Path):
 
     assert status == 409
     assert payload["status"] == "INVALID_STATE"
+
+
+def test_metrics_usage_returns_cost_series_and_call_rows(tmp_path: Path):
+    service = StubService(tmp_path)
+    _create_task(service, status="COMPLETED_WITH_PATCH", task_id="task_metrics")
+    service.db.upsert_task_metrics({
+        "task_id": "task_metrics",
+        "attempt_no": 1,
+        "worker": "go",
+        "model": "glm-5.2",
+        "status": "success",
+        "failure_reason": "",
+        "total_cost_usd": 0.0139,
+        "duration_ms": 1200,
+        "duration_api_ms": 1000,
+        "num_turns": 1,
+        "input_tokens": 45978,
+        "output_tokens": 74,
+        "cache_read_input_tokens": 0,
+        "changed_files_count": 1,
+        "build_passed": True,
+        "review_approved": True,
+        "created_at": "2026-06-28T13:12:00Z",
+    })
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    status, _, payload = api.handle_get("/api/metrics/usage", "limit=20")
+
+    assert status == 200
+    assert payload["cost_series"]["dates"] == ["2026-06-28"]
+    assert payload["cost_series"]["models"] == ["glm-5.2"]
+    assert payload["cost_series"]["rows"] == [
+        {"date": "2026-06-28", "model": "glm-5.2", "cost_usd": 0.0139}
+    ]
+    assert payload["calls"][0]["input_tokens"] == 45978
+    assert payload["calls"][0]["output_tokens"] == 74
+    assert payload["calls"][0]["session"] == "_metrics"

@@ -311,6 +311,20 @@ class TaskDB:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def list_recent_task_metrics(self, limit: int = 500) -> list[dict[str, Any]]:
+        self.init()
+        limit = max(1, min(int(limit), 2000))
+        with self.connect() as con:
+            rows = con.execute(
+                """
+                SELECT * FROM task_metrics
+                ORDER BY created_at DESC, task_id DESC, attempt_no DESC
+                LIMIT ?
+                """,
+                [limit],
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def model_metrics_summary(self) -> list[dict[str, Any]]:
         self.init()
         with self.connect() as con:

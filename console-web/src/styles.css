@@ -207,6 +207,133 @@ small {
   gap: 14px;
 }
 
+.metrics-page {
+  display: grid;
+  grid-template-columns: minmax(220px, 340px) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.metrics-wide {
+  grid-column: 1 / -1;
+}
+
+.cost-chart {
+  border: 1px solid #d9e1ea;
+  border-radius: 6px;
+  padding: 22px 24px 16px;
+}
+
+.chart-grid {
+  position: relative;
+  height: 340px;
+  border-bottom: 1px solid #cfd7e2;
+  margin-left: 42px;
+}
+
+.chart-line {
+  position: absolute;
+  left: -42px;
+  right: 0;
+  border-top: 1px solid #dfe5ec;
+  color: #66758a;
+  font-size: 12px;
+}
+
+.chart-line span {
+  position: relative;
+  top: -8px;
+  display: inline-block;
+  width: 36px;
+}
+
+.bar-groups {
+  position: absolute;
+  inset: 0 0 0 0;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(54px, 1fr);
+  align-items: end;
+  gap: 8px;
+}
+
+.bar-group {
+  height: 100%;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 28px;
+  align-items: end;
+  justify-items: center;
+  color: #66758a;
+  font-size: 12px;
+}
+
+.bars {
+  height: 100%;
+  width: 38px;
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  gap: 3px;
+}
+
+.bar {
+  width: 14px;
+  min-height: 0;
+  border: 1px solid;
+  opacity: 0.72;
+}
+
+.model-0 {
+  background: #dec5f3;
+  border-color: #b788dd;
+}
+
+.model-1 {
+  background: #f3d5cc;
+  border-color: #e6a493;
+}
+
+.model-2 {
+  background: #c9e7ef;
+  border-color: #7ab8c9;
+}
+
+.model-3 {
+  background: #d8e9c7;
+  border-color: #9abe72;
+}
+
+.chart-legend {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding-top: 18px;
+  color: #4c5868;
+}
+
+.chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.legend-swatch {
+  width: 20px;
+  height: 20px;
+  display: inline-block;
+  border: 1px solid;
+}
+
+.usage-table code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
+.token-cell {
+  color: #7a828d;
+  font-size: 14px;
+}
+
 pre {
   max-height: 360px;
   overflow: auto;
@@ -392,7 +519,13 @@ dd {
   }
 
   .health-strip,
-  .detail-grid {
+  .detail-grid,
+  .metrics-page {
     grid-template-columns: 1fr;
+  }
+
+  .chart-grid {
+    margin-left: 34px;
+    overflow-x: auto;
   }
 }

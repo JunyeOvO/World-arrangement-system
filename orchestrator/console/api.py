@@ -38,6 +38,8 @@ class ConsoleAPI:
             return 200, "application/json", self.queries.metrics_summary()
         if path == "/api/metrics/models":
             return 200, "application/json", {"models": self.queries.model_metrics()}
+        if path == "/api/metrics/usage":
+            return 200, "application/json", self.queries.metrics_usage(_int(params.get("limit"), 200))
         if path == "/api/audit":
             return 200, "application/json", self.queries.audit(
                 params.get("task_id"),

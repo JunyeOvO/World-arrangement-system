@@ -63,7 +63,10 @@ def event_view(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def metric_view(row: dict[str, Any]) -> dict[str, Any]:
-    return redact(dict(row))
+    value = redact(dict(row))
+    for key in ("input_tokens", "output_tokens", "cache_read_input_tokens"):
+        value[key] = row.get(key)
+    return value
 
 
 def alert_view(row: dict[str, Any]) -> dict[str, Any]:
@@ -93,4 +96,3 @@ def artifact_allowed(relative: str) -> bool:
     if normalized.startswith("../") or "/../" in normalized or normalized == "..":
         return False
     return normalized in PUBLIC_ARTIFACTS
-
