@@ -371,6 +371,36 @@ def test_opencode_worker_does_not_scan_prompt_for_launch_permissions(monkeypatch
     assert called["run"] is True
 
 
+def test_opencode_worker_summary_uses_stdout_text_event(monkeypatch, tmp_path):
+    expected = "复核完成。最可能误导用户的点是道路连续穿过水体。"
+
+    def _success(cmd, **kwargs):
+        stdout_path = Path(kwargs["stdout_path"])
+        stdout_path.parent.mkdir(parents=True, exist_ok=True)
+        stdout_path.write_text(
+            json.dumps({"type": "text", "part": {"text": expected}}, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        Path(kwargs["stderr_path"]).write_text("", encoding="utf-8")
+        return ManagedProcessResult(
+            returncode=0,
+            stdout_path=str(stdout_path),
+            stderr_path=str(kwargs["stderr_path"]),
+            status="succeeded",
+        )
+
+    monkeypatch.setenv("AI_OPENCODE_CMD", "opencode")
+    monkeypatch.setattr("orchestrator.workers.opencode_worker.command_available", lambda cmd: (True, cmd))
+    monkeypatch.setattr("orchestrator.workers.opencode_worker.run_managed_process", _success)
+
+    worker = OpenCodeWorker()
+    task = {"run_dir": str(tmp_path), "task_id": "t_text", "test_commands": [], "build_commands": []}
+    result = worker.run("prompt", tmp_path, {"selected_model": "opencode-go/glm-5.2"}, task)
+
+    assert result.status == "success"
+    assert result.summary == expected
+
+
 def test_opencode_worker_still_blocks_denied_launcher_env(monkeypatch, tmp_path):
     called = {"run": False}
 
@@ -416,7 +446,7 @@ def test_opencode_worker_forbids_dangerous_skip_permissions():
     assert "--dangerously-skip-permissions" in FORBIDDEN_ACTION_PATTERNS
     # Verify the worker doesn't pass the flag (command construction is checked in dry_run)
     worker = OpenCodeWorker()
-    result = worker.run(
+    worker.run(
         "test", Path("."),
         _dummy_route(model="opencode-go/glm-5.2", worker="opencode"),
         _dummy_task(), dry_run=True,

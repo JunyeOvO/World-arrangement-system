@@ -365,6 +365,87 @@ def test_read_only_worker_success_completes_with_artifacts(tmp_path, monkeypatch
     assert review_payload["review_mode"] == "skipped_read_only"
     assert review_payload["approved"] is True
     assert "Travel_with_me uses TypeScript" in final_md
+    task_payload = json.loads((run_dir / "task.json").read_text(encoding="utf-8"))
+    assert task_payload["status"] == "COMPLETED_WITH_ARTIFACTS"
+    assert task_payload["route_worker"] == "claude_code"
+
+
+def test_repair_task_artifacts_backfills_opencode_summary_and_status(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_ORCHESTRATOR_HOME", str(tmp_path / "runtime"))
+    service = OrchestratorService()
+    run_dir = service.artifacts.run_dir("t_opencode_repair")
+    worker_dir = run_dir / "worker"
+    worker_dir.mkdir(parents=True)
+    stdout_path = worker_dir / "worker.stdout.jsonl"
+    stdout_path.write_text(
+        "\n".join([
+            json.dumps({"type": "text", "part": {"text": "GLM 输出：桥梁与道路偏移 75m。"}}, ensure_ascii=False),
+            json.dumps({
+                "type": "step_finish",
+                "timestamp": 1000,
+                "part": {
+                    "cost": 0.01,
+                    "tokens": {
+                        "input": 100,
+                        "output": 20,
+                        "cache": {"read": 80},
+                    },
+                },
+            }),
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    service.db.create_task({
+        "task_id": "t_opencode_repair",
+        "project_id": "travel_with_me",
+        "repo_path": str(tmp_path),
+        "user_goal": "只读复核，不修改文件。",
+        "status": "COMPLETED_WITH_ARTIFACTS",
+        "created_at": "2026-06-28T00:00:00Z",
+        "updated_at": "2026-06-28T00:01:00Z",
+        "route_worker": "opencode",
+        "route_model": "opencode_go_glm52",
+        "route_variant": "high",
+        "pr_url": None,
+        "run_dir": str(run_dir),
+    })
+    service.artifacts.write_json("t_opencode_repair", "task.json", {
+        "task_id": "t_opencode_repair",
+        "status": "QUEUED",
+    })
+    service.artifacts.write_json("t_opencode_repair", "result.json", {
+        "status": "success",
+        "summary": "OpenCode worker finished",
+        "changed_files": [],
+        "stdout_path": str(stdout_path),
+    })
+    service.artifacts.write_json("t_opencode_repair", "route.json", {
+        "selected_worker": "opencode",
+        "selected_model": "opencode_go_glm52",
+    })
+    service.artifacts.write_json("t_opencode_repair", "verify/verify.json", {
+        "tests_passed": True,
+        "build_passed": True,
+    })
+    service.artifacts.write_json("t_opencode_repair", "review/review.json", {
+        "approved": True,
+        "review_mode": "skipped_read_only",
+        "can_create_pr": False,
+    })
+
+    result = service.repair_task_artifacts("t_opencode_repair")
+
+    assert result["repaired_count"] == 1
+    task_payload = json.loads((run_dir / "task.json").read_text(encoding="utf-8"))
+    result_payload = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
+    final_md = (run_dir / "final.md").read_text(encoding="utf-8")
+    metrics_payload = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+    assert task_payload["status"] == "COMPLETED_WITH_ARTIFACTS"
+    assert task_payload["route_worker"] == "opencode"
+    assert result_payload["summary"] == "GLM 输出：桥梁与道路偏移 75m。"
+    assert "桥梁与道路偏移" in final_md
+    assert metrics_payload["total_cost_usd"] == 0.01
+    assert metrics_payload["input_tokens"] == 100
 
 
 def test_reaper_recovers_stale_read_only_success_stream(tmp_path, monkeypatch):

@@ -73,6 +73,8 @@ def parse_worker_stream(path: Path) -> dict[str, Any]:
         return {}
 
     metrics: dict[str, Any] = {}
+    first_ts: int | None = None
+    last_ts: int | None = None
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = line.strip()
         if not line:
@@ -83,7 +85,13 @@ def parse_worker_stream(path: Path) -> dict[str, Any]:
             continue
         if not isinstance(event, dict):
             continue
+        ts = _int_or_none(event.get("timestamp"))
+        if ts is not None:
+            first_ts = ts if first_ts is None else min(first_ts, ts)
+            last_ts = ts if last_ts is None else max(last_ts, ts)
         _merge_event_metrics(metrics, event)
+    if first_ts is not None and last_ts is not None and "duration_ms" not in metrics:
+        metrics["duration_ms"] = max(0, last_ts - first_ts)
     return metrics
 
 
@@ -96,6 +104,7 @@ def write_metrics(metrics: TaskMetrics, output: Path) -> Path:
 def _merge_event_metrics(metrics: dict[str, Any], event: dict[str, Any]) -> None:
     result = event.get("result") if isinstance(event.get("result"), dict) else event
     usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+    part = event.get("part") if isinstance(event.get("part"), dict) else {}
 
     for key in ("total_cost_usd", "duration_ms", "duration_api_ms", "num_turns"):
         if key in result:
@@ -114,6 +123,23 @@ def _merge_event_metrics(metrics: dict[str, Any], event: dict[str, Any]) -> None
     subtype = result.get("subtype") or result.get("error")
     if isinstance(subtype, str) and subtype:
         metrics["failure_reason"] = subtype
+
+    if event.get("type") == "step_finish":
+        metrics["num_turns"] = int(metrics.get("num_turns") or 0) + 1
+        cost = _float_or_none(part.get("cost"))
+        if cost is not None:
+            metrics["total_cost_usd"] = float(metrics.get("total_cost_usd") or 0.0) + cost
+        tokens = part.get("tokens") if isinstance(part.get("tokens"), dict) else {}
+        _add_metric(metrics, "input_tokens", tokens.get("input"))
+        _add_metric(metrics, "output_tokens", tokens.get("output"))
+        cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+        _add_metric(metrics, "cache_read_input_tokens", cache.get("read"))
+
+
+def _add_metric(metrics: dict[str, Any], key: str, value: Any) -> None:
+    amount = _int_or_none(value)
+    if amount is not None:
+        metrics[key] = int(metrics.get(key) or 0) + amount
 
 
 def _float_or_none(value: Any) -> float | None:

@@ -24,7 +24,6 @@ from .permissions import check_write_paths
 from .pr import create_pr_or_patch
 from .project_registry import detect_project, load_projects
 from .project_commands import (
-    handle_batch_discover_and_register,
     handle_confirm_project_profile,
     handle_discover_projects,
     handle_ignore_project,
@@ -298,6 +297,37 @@ class OrchestratorService:
                 text = Path(path).read_text(encoding="utf-8", errors="replace")
                 result[key] = text[:20000]
         return result
+
+    def repair_task_artifacts(self, task_id: str | None = None, limit: int = 200) -> dict[str, Any]:
+        """Repair run artifacts that drifted from DB state or worker output.
+
+        This is intentionally conservative: it does not infer new task states.
+        It only mirrors the current DB task row into task.json and, for completed
+        OpenCode runs, backfills the final assistant text from worker.stdout.jsonl
+        when result.json/final.md only contain the generic completion marker.
+        """
+        if task_id:
+            task = self.db.get_task(task_id)
+            tasks = [task] if task else []
+        else:
+            tasks = self.db.list_tasks(limit=limit)
+        repaired: list[dict[str, Any]] = []
+        for task in tasks:
+            if not task:
+                continue
+            changes: list[str] = []
+            if self._sync_task_artifact_from_db(task["task_id"]):
+                changes.append("task_json_synced")
+            if self._repair_worker_result_artifacts(task):
+                changes.append("worker_result_backfilled")
+            if changes:
+                repaired.append({"task_id": task["task_id"], "changes": changes})
+        return {
+            "status": "ok",
+            "scope": task_id or f"recent:{max(1, min(int(limit), 500))}",
+            "repaired_count": len(repaired),
+            "repaired": repaired,
+        }
 
     def open_task_artifacts(self, task_id: str) -> dict[str, Any]:
         task = self.db.get_task(task_id)
@@ -1040,7 +1070,81 @@ class OrchestratorService:
         old = self.db.get_task(task_id)
         old_status = old["status"] if old else None
         self.db.update_task(task_id, status=status, updated_at=_now())
+        self._sync_task_artifact_from_db(task_id)
         self.db.append_event(task_id, event_type, old_status, status, payload)
+
+    def _sync_task_artifact_from_db(self, task_id: str) -> bool:
+        task = self.db.get_task(task_id)
+        if not task:
+            return False
+        task_path = Path(str(task.get("run_dir") or "")) / "task.json"
+        if not task_path.exists():
+            return False
+        payload = _read_json_if_exists(task_path)
+        if not isinstance(payload, dict):
+            return False
+        changed = False
+        for key in (
+            "status",
+            "updated_at",
+            "route_worker",
+            "route_model",
+            "route_variant",
+            "pr_url",
+        ):
+            value = task.get(key)
+            if value is not None and payload.get(key) != value:
+                payload[key] = value
+                changed = True
+        if changed:
+            self.artifacts.write_json(task_id, "task.json", payload)
+        return changed
+
+    def _repair_worker_result_artifacts(self, task: dict[str, Any]) -> bool:
+        if str(task.get("route_worker") or "") != "opencode":
+            return False
+        run_dir = Path(str(task.get("run_dir") or ""))
+        result_path = run_dir / "result.json"
+        result = _read_json_if_exists(result_path)
+        if not isinstance(result, dict):
+            return False
+        stdout_path = Path(str(result.get("stdout_path") or run_dir / "worker" / "worker.stdout.jsonl"))
+        summary = _extract_worker_success_text(stdout_path)
+        if not summary:
+            return False
+        current_summary = str(result.get("summary") or "")
+        generic_summary = current_summary.strip() in {"", "OpenCode worker finished", "OpenCode worker failed"}
+        if not generic_summary:
+            return False
+        result["summary"] = summary
+        self.artifacts.write_json(task["task_id"], "result.json", result)
+        attempt_result = run_dir / "attempts" / "01" / "result.json"
+        attempt_payload = _read_json_if_exists(attempt_result)
+        if isinstance(attempt_payload, dict):
+            attempt_payload["summary"] = summary
+            self.artifacts.write_json(task["task_id"], "attempts/01/result.json", attempt_payload)
+        route = _read_json_if_exists(run_dir / "route.json") or {
+            "selected_worker": task.get("route_worker") or "opencode",
+            "selected_model": task.get("route_model") or "opencode_go_glm52",
+        }
+        verify = _read_json_if_exists(run_dir / "verify" / "verify.json") or {}
+        review = _read_json_if_exists(run_dir / "review" / "review.json") or {}
+        self.artifacts.write_text(task["task_id"], "final.md", _final_md(task, route, result, verify, review))
+        metrics = collect_task_metrics(
+            task_id=task["task_id"],
+            attempt_no=1,
+            worker=str(task.get("route_worker") or "opencode"),
+            model=str(task.get("route_model") or "opencode_go_glm52"),
+            status=str(result.get("status") or ""),
+            stream_path=str(stdout_path),
+            changed_files_count=len(result.get("changed_files") or []),
+            build_passed=verify.get("build_passed"),
+            review_approved=review.get("approved"),
+        )
+        write_metrics(metrics, run_dir / "attempts" / "01" / "metrics.json")
+        write_metrics(metrics, run_dir / "metrics.json")
+        self.db.upsert_task_metrics(metrics.to_dict())
+        return True
 
     def _check_worker_declared_permissions(self, task_id: str, worker_name: str, task: dict[str, Any]) -> dict[str, Any]:
         paths = _declared_write_paths(task)
@@ -1322,6 +1426,11 @@ def _extract_worker_success_text(path: Path) -> str | None:
                 ).strip()
                 if text:
                     result_text = text
+        part = event.get("part")
+        if event.get("type") == "text" and isinstance(part, dict):
+            raw_text = part.get("text")
+            if isinstance(raw_text, str) and raw_text.strip():
+                result_text = raw_text.strip()
     return result_text
 
 

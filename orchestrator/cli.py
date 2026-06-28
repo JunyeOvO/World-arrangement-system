@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 import sys
-from pathlib import Path
 
 from .config import ensure_runtime_dirs, paths
 from .constants import DEFAULT_CLAUDE_CMD, DEFAULT_OPENCODE_CMD
@@ -52,6 +51,9 @@ def main(argv: list[str] | None = None) -> int:
     status.add_argument("--task-id", required=True)
     result = sub.add_parser("read-task-result")
     result.add_argument("--task-id", required=True)
+    repair = sub.add_parser("repair-task-artifacts")
+    repair.add_argument("--task-id", default=None, help="Repair one task; omit to repair recent tasks")
+    repair.add_argument("--limit", type=int, default=200, help="Recent task limit when --task-id is omitted")
     artifacts = sub.add_parser("open-task-artifacts")
     artifacts.add_argument("--task-id", required=True)
     control = sub.add_parser("get-task-control")
@@ -100,6 +102,8 @@ def main(argv: list[str] | None = None) -> int:
         return _print(service.get_task_status(args.task_id))
     if args.cmd == "read-task-result":
         return _print(service.read_task_result(args.task_id))
+    if args.cmd == "repair-task-artifacts":
+        return _print(service.repair_task_artifacts(args.task_id, args.limit))
     if args.cmd == "open-task-artifacts":
         return _print(service.open_task_artifacts(args.task_id))
     if args.cmd == "get-task-control":
@@ -116,7 +120,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _print(payload: object) -> int:
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    try:
+        sys.stdout.write(text + "\n")
+    except UnicodeEncodeError:
+        sys.stdout.buffer.write((text + "\n").encode("utf-8", errors="replace"))
     return 0
 
 

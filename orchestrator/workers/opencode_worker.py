@@ -226,9 +226,11 @@ class OpenCodeWorker(Worker):
         if ownership_violations:
             risks.extend(ownership_violations)
 
+        summary = _extract_opencode_summary(stdout_path)
+
         return WorkerResult(
             "success" if success else "failed",
-            "OpenCode worker finished" if success else "OpenCode worker failed",
+            summary or ("OpenCode worker finished" if success else "OpenCode worker failed"),
             changed_files,
             task.get("test_commands", []),
             risks,
@@ -239,3 +241,52 @@ class OpenCodeWorker(Worker):
             tests_run=[],
             rollback_notes=rollback_notes,
         )
+
+
+def _extract_opencode_summary(path: Path) -> str | None:
+    """Extract the final assistant text from OpenCode JSONL output.
+
+    OpenCode emits text as top-level ``{"type":"text","part":{"text":...}}``
+    events. Older scheduler recovery code only understood Claude-style result
+    events, so completed OpenCode tasks lost their real report in result.json.
+    """
+    if not path.exists():
+        return None
+    latest_text: str | None = None
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        text = _event_text(event)
+        if text:
+            latest_text = text
+    return latest_text
+
+
+def _event_text(event: dict) -> str | None:
+    part = event.get("part")
+    if event.get("type") == "text" and isinstance(part, dict):
+        text = part.get("text")
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+    message = event.get("message")
+    if isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, list):
+            text = "\n".join(
+                item.get("text", "")
+                for item in content
+                if isinstance(item, dict)
+                and item.get("type") == "text"
+                and isinstance(item.get("text"), str)
+            ).strip()
+            if text:
+                return text
+    return None
