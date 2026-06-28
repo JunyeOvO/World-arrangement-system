@@ -550,9 +550,16 @@ pre {
 }
 
 .artifact-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: 0;
+  row-gap: 6px;
+  align-items: start;
+}
+
+.artifact-list a {
+  justify-self: start;
+  overflow-wrap: anywhere;
 }
 
 .banner {
