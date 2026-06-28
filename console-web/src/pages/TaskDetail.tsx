@@ -52,7 +52,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
         )}
       </section>
       <RouteDecisionCard route={detail.route_decision} />
-      <section className="panel">
+      <section className="panel timeline-panel">
         <h2>Timeline</h2>
         <TaskTimeline events={detail.timeline} />
       </section>

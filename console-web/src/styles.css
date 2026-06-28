@@ -231,9 +231,22 @@ small {
   grid-column: 1 / -1;
 }
 
+.timeline-panel,
 .output-panel,
 .artifacts-panel {
   min-height: 0;
+}
+
+.timeline-panel,
+.output-panel {
+  height: 620px;
+  display: flex;
+  flex-direction: column;
+}
+
+.timeline-panel h2,
+.output-panel h2 {
+  flex: 0 0 auto;
 }
 
 .artifacts-panel {
@@ -446,7 +459,8 @@ pre {
 }
 
 .markdown-preview {
-  max-height: 560px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   background: #fff;
   color: #111827;
@@ -509,6 +523,10 @@ pre {
   list-style: none;
   padding: 0;
   margin: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 8px;
 }
 
 .timeline li {
