@@ -35,6 +35,7 @@ def classify_task(features: TaskFeatures) -> TaskLabels:
         requires_multimodal=features.requires_multimodal,
         explicit_model_request=features.explicit_model_request,
         needs_code_change=needs_code_change,
+        task_shape=features.task_shape,
     )
 
 

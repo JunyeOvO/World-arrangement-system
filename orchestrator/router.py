@@ -18,6 +18,7 @@ from .routing.decision import make_decision
 from .routing.schema import RouteV2
 from .agent_llm import agent_llm_name
 from .llm_capability import capability_profile, normalize_capability_tier
+from .router_v3 import apply_router_v3
 
 
 @dataclass
@@ -41,6 +42,10 @@ class Route:
     retry_chain: list[dict[str, Any]] = field(default_factory=list)
     blocked: bool = False
     requires_hard_approval: bool = False
+    task_shape: str = ""
+    budget_estimate_usd: float | None = None
+    budget_cap_usd: float | None = None
+    history_basis: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -72,6 +77,14 @@ class Route:
             d["blocked"] = True
         if self.requires_hard_approval:
             d["requires_hard_approval"] = True
+        if self.task_shape:
+            d["task_shape"] = self.task_shape
+        if self.budget_estimate_usd is not None:
+            d["budget_estimate_usd"] = self.budget_estimate_usd
+        if self.budget_cap_usd is not None:
+            d["budget_cap_usd"] = self.budget_cap_usd
+        if self.history_basis:
+            d["history_basis"] = self.history_basis
         return d
 
 
@@ -102,7 +115,7 @@ def plan_route(
     safety = safety_gate(task, project, features, labels)
 
     if safety.blocked:
-        return Route(
+        return _apply_router_v3_to_route(Route(
             selected_model="",
             selected_worker="",
             reason=f"BLOCKED: {safety.reason}",
@@ -111,7 +124,7 @@ def plan_route(
             blocked=True,
             intensity="",
             confidence=1.0,
-        )
+        ), task, project, history, features, None)
 
     # ── Phase 4: Candidate Building ──
     candidates = build_candidates(task, project, features, labels)
@@ -175,7 +188,46 @@ def plan_route(
     )
 
     # ── Enforce hard rules ──
-    return _apply_capability_profile(_enforce_hard_rules(decision, task_type, risk_level, project))
+    route = _apply_capability_profile(_enforce_hard_rules(decision, task_type, risk_level, project))
+    return _apply_router_v3_to_route(route, task, project, history, features, labels)
+
+
+def _apply_router_v3_to_route(
+    route: Route,
+    task: dict[str, Any],
+    project: dict[str, Any] | None,
+    history: list[dict[str, Any]] | dict[str, Any] | None,
+    features: Any | None,
+    labels: Any | None,
+) -> Route:
+    data = apply_router_v3(route.to_dict(), task, project, history, features, labels)
+    return _route_from_dict(data)
+
+
+def _route_from_dict(data: dict[str, Any]) -> Route:
+    return Route(
+        selected_model=str(data.get("selected_model", "")),
+        selected_worker=str(data.get("selected_worker", "")),
+        reason=str(data.get("reason", "")),
+        fallback_models=list(data.get("fallback_models") or []),
+        max_retries=int(data.get("max_retries") or 0),
+        escalation_policy=str(data.get("escalation_policy") or "codex_review_or_needs_user"),
+        variant=data.get("variant"),
+        intensity=str(data.get("intensity") or "medium"),
+        capability_tier=str(data.get("capability_tier") or "default"),
+        capability_profile=data.get("capability_profile"),
+        confidence=float(data.get("confidence") or 0.5),
+        task_labels=data.get("task_labels") if isinstance(data.get("task_labels"), dict) else None,
+        matched_rules=list(data.get("matched_rules") or []),
+        rejected_candidates=list(data.get("rejected_candidates") or []),
+        retry_chain=list(data.get("retry_chain") or []),
+        blocked=bool(data.get("blocked", False)),
+        requires_hard_approval=bool(data.get("requires_hard_approval", False)),
+        task_shape=str(data.get("task_shape") or ""),
+        budget_estimate_usd=data.get("budget_estimate_usd"),
+        budget_cap_usd=data.get("budget_cap_usd"),
+        history_basis=data.get("history_basis") if isinstance(data.get("history_basis"), dict) else {},
+    )
 
 
 def _enforce_hard_rules(decision: RouteV2, task_type: str, risk_level: str, project: dict[str, Any] | None = None) -> Route:

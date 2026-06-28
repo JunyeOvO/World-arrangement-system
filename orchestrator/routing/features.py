@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..router_v3 import classify_task_shape
 from .schema import TaskFeatures
 
 # ── Path kind patterns ──
@@ -79,7 +80,7 @@ def extract_features(task: dict[str, Any], project: dict[str, Any] | None = None
     # Blocked signals
     blocked_signals = [sig for sig in _BLOCKED_SIGNALS if sig in goal_lower]
 
-    return TaskFeatures(
+    features = TaskFeatures(
         goal_lower=goal_lower,
         keywords=keywords,
         target_paths=target_paths,
@@ -93,6 +94,8 @@ def extract_features(task: dict[str, Any], project: dict[str, Any] | None = None
         task_type=str(task.get("task_type", "")),
         risk_level=str(task.get("risk_level", "medium")),
     )
+    features.task_shape = classify_task_shape(task, features, None)
+    return features
 
 
 def _classify_paths(paths: list[str], goal_lower: str) -> list[str]:

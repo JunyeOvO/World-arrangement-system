@@ -781,10 +781,14 @@ class OrchestratorService:
                 },
             )
             return _apply_route_override(dict(plan_result["plan"]["route"]), task)
-        return _apply_route_override(plan_route(task, project).to_dict(), task)
+        return _apply_route_override(plan_route(task, project, history=self.db.model_metrics_summary()).to_dict(), task)
 
     def _build_world_plan_route(self, user_goal: str, risk_level: str, project: dict[str, Any]) -> dict[str, Any]:
-        return plan_route({"user_goal": user_goal, "risk_level": risk_level}, project).to_dict()
+        return plan_route(
+            {"user_goal": user_goal, "risk_level": risk_level},
+            project,
+            history=self.db.model_metrics_summary(),
+        ).to_dict()
 
     def _record_policy_learning(
         self, task: dict[str, Any], project: dict[str, Any], success: bool,

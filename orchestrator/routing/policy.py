@@ -39,7 +39,7 @@ def apply_policy_overrides(
             resolved.reasons.append("project prefer_low_cost_for_docs -> downgrade to flash")
 
     # ── History success rate ──
-    if history:
+    if history and isinstance(history, list):
         # Boost confidence if same worker+model has recent successes
         recent_successes = sum(
             1 for h in history[-10:]

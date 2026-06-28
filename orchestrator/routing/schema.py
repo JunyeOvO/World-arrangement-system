@@ -23,6 +23,7 @@ class TaskFeatures:
     blocked_signals: list[str] = field(default_factory=list)
     task_type: str = ""
     risk_level: str = "medium"
+    task_shape: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -36,6 +37,7 @@ class TaskFeatures:
             "requires_multimodal": self.requires_multimodal,
             "risk_signals": self.risk_signals,
             "blocked_signals": self.blocked_signals,
+            "task_shape": self.task_shape,
         }
 
 
@@ -50,6 +52,7 @@ class TaskLabels:
     requires_multimodal: bool = False
     explicit_model_request: str | None = None
     needs_code_change: bool = False
+    task_shape: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -61,6 +64,7 @@ class TaskLabels:
             "requires_multimodal": self.requires_multimodal,
             "explicit_model_request": self.explicit_model_request,
             "needs_code_change": self.needs_code_change,
+            "task_shape": self.task_shape,
         }
 
 
@@ -115,6 +119,10 @@ class RouteV2:
     escalation_policy: str = "codex_review_or_needs_user"
     blocked: bool = False
     requires_hard_approval: bool = False
+    task_shape: str = ""
+    budget_estimate_usd: float | None = None
+    budget_cap_usd: float | None = None
+    history_basis: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -143,4 +151,8 @@ class RouteV2:
             "escalation_policy": self.escalation_policy,
             "blocked": self.blocked,
             "requires_hard_approval": self.requires_hard_approval,
+            "task_shape": self.task_shape,
+            "budget_estimate_usd": self.budget_estimate_usd,
+            "budget_cap_usd": self.budget_cap_usd,
+            "history_basis": self.history_basis,
         }
