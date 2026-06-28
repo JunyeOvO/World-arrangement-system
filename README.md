@@ -1,158 +1,293 @@
-# World 系统
+# World Arrangement System
 
-> 兼容说明：本仓库早期名称为 ai-orchestrator-v1，CLI 仍保留 `ai-dispatcher`。
+> Legacy compatibility: this repository was originally named `ai-orchestrator-v1`. The Python CLI command is still `ai-dispatcher`.
 
-World 系统是一个以 Codex 为入口、World Core（MCP Orchestrator）为调度核心，连接 Claude Code、OpenCode、Codex Review 等 Agent 与固定 LLM 组合的多模型全自动开发中枢。
+World is a local multi-agent development orchestration system for Codex-driven software work. Codex stays as the human-facing planner and dispatcher, while World routes bounded project tasks to local worker agents, records evidence, runs verification, and returns reviewable artifacts.
 
-用户只需在 Codex 中输入自然语言任务，World Core（MCP `ai_dispatcher`）自动完成项目识别、模型路由、worktree 隔离、worker 执行、测试、World Review、PR 或 patch 交付。
+The core goal is practical: reduce Codex main-thread work by moving execution, verification, model routing, and evidence collection into a controlled local system. World measures real worker LLM token usage and cost, and separately estimates Codex planning/review token pressure so the system can be tuned toward longer Codex quota availability.
 
-安全边界：**可以自动执行、自动测试、自动生成 diff、自动 review、自动创建 PR；永远不自动 merge。**
+## What World Does
 
-## Layout
+- Detects and registers real local projects.
+- Accepts structured tasks from Codex through `/world`.
+- Routes work across supported agent/model combinations.
+- Runs workers in isolated task directories and worktrees.
+- Tracks task state, process liveness, artifacts, review, and verification.
+- Computes real worker model cost from recorded input/output/cache tokens.
+- Displays system health, tasks, model usage, token cost, and Codex budget pressure in a local Web Console.
+- Keeps business repositories clean by storing World runtime data outside the project when configured.
+
+World can create diffs, patches, and PR-ready artifacts. It does **not** automatically merge changes.
+
+## Current Architecture
 
 ```text
-orchestrator/         Python package
-config/               user-level config templates
-profiles/             provider env profile examples, no real keys
-prompts/              worker/reviewer prompts
-schemas/              JSON Schema contracts
-scripts/              install, doctor, MCP and dry-run helpers
-tests/                pytest suite
-docs/                 architecture, SOP, security, routing, Codex usage
+Codex /world skill
+  -> ai-dispatcher CLI or MCP tools
+  -> World Core orchestrator
+  -> Router + approval policy + worktree control
+  -> Claudecode / Opencode workers
+  -> Verify + World Review
+  -> artifacts, metrics, Console, patch or PR
 ```
 
-Key documents:
+Main directories:
 
-- `docs/WORLD_SYSTEM_OVERVIEW.md`
-- `docs/CODEX_ENTRY.md`
-- `docs/LIGHTWEIGHT_DEPLOYMENT.md`
-- `docs/ROUTER_V2.md`
-- `docs/ADAPTIVE_PARALLELISM.md`
-- `docs/WORKER_CONTRACT.md`
-- `docs/OPENCODE_WORKER.md`
-- `docs/MODEL_ROUTING.md`
+```text
+orchestrator/         Python package, CLI, MCP server, scheduler, router, console API
+console-web/          React/Vite Web Console frontend
+config/               user-level config templates
+profiles/             provider env profile examples only, no real keys
+prompts/              worker and review prompts
+schemas/              JSON schema contracts
+scripts/              helper scripts
+tests/                pytest suite
+docs/                 architecture, rollout plans, status design, capability reports
+```
+
+## Supported Agent / Model Names
+
+The Console normalizes displayed names to:
+
+| Agent | Models |
+|---|---|
+| Claudecode | Deepseek-V4-flash, Deepseek-V4-pro, Mimo-V2.5, Mimo-V2.5-pro |
+| Opencode | GLM-5.2 |
+
+OpenCode owns GLM provider access. Claude Code provider profiles are loaded per worker subprocess so model environments do not overwrite each other globally.
 
 ## Install
 
-```bash
-cd ai-orchestrator-v1
+Windows PowerShell:
+
+```powershell
+cd C:\Users\fujunye\Documents\World系统
 uv sync --dev
-mkdir -p ~/.ai-orchestrator/runs
-mkdir -p ~/.world
+```
+
+Linux/macOS style shell:
+
+```bash
+cd /path/to/World-arrangement-system
+uv sync --dev
+```
+
+Create user-level config from examples:
+
+```bash
+mkdir -p ~/.ai-orchestrator ~/.world
 cp config/projects.yaml.example ~/.ai-orchestrator/projects.yaml
 cp config/models.yaml.example ~/.ai-orchestrator/models.yaml
 cp config/policies.yaml.example ~/.ai-orchestrator/policies.yaml
 ```
 
-Edit `~/.ai-orchestrator/projects.yaml` so each `repo` points to a real git repository.
+Then edit `~/.ai-orchestrator/projects.yaml` so each `repo` points to a real git repository.
 
-World vNext runtime artifacts use `WORLD_HOME` when available and default to `~/.world`. Keep provider keys and runtime profiles outside business repositories.
+Do not commit provider keys. Keep real `.env` files, provider profiles, logs, worker outputs, and runtime stores outside git.
 
-## Codex MCP Config
+## Codex Skills
 
-Copy `config/codex-mcp.config.example.toml` into your user-level Codex config and adjust the project path:
+World is split into two Codex skills:
 
-```toml
-[mcp_servers.ai_dispatcher]
-command = "uv"
-args = ["run", "--project", "/home/junye/ai-orchestrator-v1", "python", "-m", "orchestrator.mcp_server"]
+| Skill | Purpose |
+|---|---|
+| `/worldsetup` | Deploy, bootstrap, register, repair, or health-check World integration for a project. |
+| `/world` | Execute tasks on an already registered project through World. |
+
+Recommended task entry:
+
+```text
+/world task
+project: travel_with_me
+mode: execute
+world_preflight: minimal
+world_self_analysis: false
+
+目标：
+修复一个明确的业务开发问题。
+
+验收标准：
+- 说明应修改哪些行为。
+- 运行相关测试或说明无法运行的原因。
+- 返回变更文件、测试结果、风险、下一步。
+
+安全约束：
+- 不读不输出 secrets。
+- 不改 .env、缓存、运行日志、worker 产物。
+- 不自动 merge。
 ```
 
-Do not add API keys to this repository.
+The intended `/world` fast path is:
 
-## Dry Run
+1. Check `git status`.
+2. Run project detection.
+3. Submit a structured task to World.
+4. Read status/result/artifacts.
+5. Report outcome to the user.
+
+`/world` should treat World as the execution backend, not as the subject being analyzed.
+
+## CLI Quick Start
+
+Health check:
 
 ```bash
 uv run ai-dispatcher doctor
-uv run pytest -q
+```
+
+Detect a project:
+
+```bash
+uv run ai-dispatcher detect-project --repo-path /path/to/project
+```
+
+Submit a dry-run task:
+
+```bash
 uv run ai-dispatcher submit-task --project generic --goal "只读分析项目结构" --dry-run
 ```
 
-Dry-run mode creates task rows and artifacts without calling real worker CLIs or requiring provider keys.
-
-## WSL-Only Worker Commands
-
-World Core may run from Windows/Codex, but Claude Code and OpenCode workers are WSL-only. Real worker execution defaults to:
-
-```powershell
-wsl -e claude
-wsl -e opencode
-```
-
-If your WSL environment uses different command names, set overrides before running real workers:
+Run tests:
 
 ```bash
-export AI_CLAUDE_CMD=claude
-export AI_OPENCODE_CMD=/path/to/opencode
+uv run pytest
 ```
 
-From Windows PowerShell, keep the WSL command wrapper:
+## Web Console
+
+Start the local Console:
+
+```bash
+uv run ai-dispatcher serve-console --host 127.0.0.1 --port 8765
+```
+
+Open:
+
+[http://127.0.0.1:8765/](http://127.0.0.1:8765/)
+
+Console capabilities:
+
+- Top status strip: Running, Queued, Failed, Approval, Alerts, Cost.
+- Process cards for current actionable tasks.
+- Task detail with timeline, route, verify, review, artifacts, and Markdown output preview.
+- Metrics dashboard with usage summary, model window, cost chart, call table, efficiency, and Codex budget.
+- Delete/dismiss actions for Failed and Approval task cards.
+- Real worker token and cost display from backend computation.
+
+The Metrics page currently includes:
+
+- Attempts
+- Total cost
+- P95 duration with automatic time units
+- Efficiency
+- Cost by model
+- Model call table
+- Codex Budget
+
+## Token And Cost Accounting
+
+World separates measured worker usage from estimated Codex usage.
+
+Measured:
+
+- Worker input tokens
+- Worker output tokens
+- Worker cache-read input tokens
+- Worker model cost computed by backend pricing
+- Same-token GLM-5.2 reference baseline
+- Savings amount and savings percentage
+
+Estimated:
+
+- Codex planning/dispatch tokens
+- Codex review tokens
+- Actual Codex review subset when Codex review is available
+
+Codex estimates use a local deterministic estimator (`utf8_bytes_div_4`) because this environment does not expose official Codex quota telemetry. They are useful for trend control and quota-pressure design, but they are not official Codex usage.
+
+The product target is to reduce Codex main-thread usage enough that a weekly quota that currently lasts about 2 days can last 7 days. That requires roughly:
+
+- 3.5x effective extension
+- 71.43% Codex-side reduction
+- 28.57% maximum remaining Codex share
+
+## Worker Execution On Windows
+
+World Core can run from Windows, but real Claude Code and OpenCode workers are commonly invoked through WSL:
 
 ```powershell
 $env:AI_CLAUDE_CMD = "wsl -e claude"
 $env:AI_OPENCODE_CMD = "wsl -e opencode"
 ```
 
-`ai-dispatcher doctor` reads these overrides and checks the command inside WSL, not only `wsl.exe`.
+If your commands differ, set the overrides before running real workers.
 
-## Agent + LLM Combinations
+## Safety Rules
 
-World Router 只使用以下组合：
+World is designed to keep automation bounded:
 
-- claude code + deepseek V4 flash
-- claude code + deepseek V4 pro
-- claude code + Mimo V2.5
-- claude code + Mimo V2.5 pro
-- opencode + GLM 5.2
-- codex + GPT 5.5
+- Never commit API keys.
+- Never submit `profiles/*.env`.
+- Never submit `.claude/settings.local.json`.
+- Never submit `.venv/`, `.pytest_cache/`, `__pycache__/`, `worker/`, logs, or runtime outputs.
+- Keep only `.env.example` and `profiles/*.env.example` in git.
+- Do not auto-merge.
+- Block or surface forbidden path changes.
+- Redact secret-like fields before returning Console data.
 
-## DeepSeek, MiMo, and GLM-5.2
+## Status Model
 
-Do not solve provider switching by rewriting global `~/.claude/settings.json` for every task. That breaks concurrent runs.
+World keeps raw execution states separate from dashboard grouping.
 
-For Claude Code only, keep one env profile per provider in `profiles/` and map each Claude-backed logical model in `config/models.yaml` to an `env_profile`. The Claude worker loads the selected profile only for that subprocess. This allows one Claude Code worker invocation to use DeepSeek while another uses MiMo without cross-contaminating environment variables.
+Top-level dashboard groups:
 
-Claude Code is only allowed to use DeepSeek or MiMo. GLM-5.2 must go through OpenCode with `opencode-go/glm-5.2`. OpenCode provider authentication/configuration is owned by OpenCode itself; World does not inject API keys or provider env profiles into OpenCode subprocesses. MiMo V2.5 and MiMo V2.5 Pro run through Claude Code, not a separate MiMo worker.
+- Running: fresh live worker/control heartbeat.
+- Queued: accepted and can continue without user input.
+- Failed: terminal or actionable failures.
+- Approval: user approval/input/review required.
+- Alerts: stale or anomalous runtime-derived states.
+- None: completed, cancelled, dismissed, or non-actionable records.
 
-## Control Layer
+This prevents stale `EXECUTING` rows from appearing as truly running when the worker process has already finished or disappeared.
 
-Real worker calls run under a World control layer. Each task writes:
+## Useful Docs
 
-- `control/process.json`: managed process PID, status, timeout, redacted command, stdout/stderr paths.
-- `control/heartbeat.json`: last seen time and elapsed seconds while the worker is running.
-- `control/cancel.requested`: durable cancellation request written by `cancel-task`.
+- `docs/WORLD_HIGHEST_STANDARD_IMPLEMENTATION_PLAN_2026-06-28.md`
+- `docs/WORLD_CAPABILITY_ASSESSMENT_AND_UPGRADE_PLAN_2026-06-29.md`
+- `docs/WORLD_STATUS_CLASSIFICATION_FIX_PLAN.md` if present locally
+- `docs/WORLD_SYSTEM_OVERVIEW.md`
+- `docs/CODEX_ENTRY.md`
+- `docs/LIGHTWEIGHT_DEPLOYMENT.md`
+- `docs/MODEL_ROUTING.md`
+- `docs/WORKER_CONTRACT.md`
 
-Use `ai-dispatcher get-task-control --task-id <id>` to inspect whether a task is running, timed out, cancelled, or finished. `cancel-task` now writes the cancel request and terminates the worker process tree.
+## Current Boundary
 
-## Daily Use
+World is useful today for:
 
-Ask Codex to use `ai_dispatcher.submit_task` or `ai_dispatcher.submit_current_project_task`.
+- Project quality audits.
+- Root-cause investigation.
+- Small and medium bug fixes.
+- Documentation and test updates.
+- Focused UI fixes.
+- Repeated tasks where routing and context compression matter.
 
-Example:
+World should still be treated carefully for:
 
-```text
-使用 ai_dispatcher.submit_task。
-项目：generic
-任务：修复 README 中的安装说明并运行测试。
-风险等级：low
-auto_execute=true
-auto_pr=true
-不要自动合并。
+- Large autonomous feature delivery.
+- Auth, payment, production database, or security-sensitive changes.
+- Multi-repo changes.
+- Tasks without reproducible local tests.
+- Claims of measured Codex quota savings before enough Codex usage ledger data exists.
+
+## Repository Hygiene
+
+Before pushing:
+
+```bash
+uv run pytest
+rg -n "sk-[A-Za-z0-9_-]{16,}|API_KEY|SECRET|TOKEN|PASSWORD" -g "!*.example" -g "!uv.lock" .
+git status --short --branch
 ```
 
-## Manual Configuration Needed
-
-- OpenAI / Codex login if using Codex review.
-- DeepSeek API key if using DeepSeek through Claude Code.
-- MiMo API key if using Claude Code + MiMo V2.5 or Claude Code + MiMo V2.5 Pro.
-- OpenCode provider access configured in OpenCode itself if using GLM-5.2 through OpenCodeWorker.
-- GitHub CLI login if enabling PR creation.
-- Real project paths in `~/.ai-orchestrator/projects.yaml`.
-
-## Failure Handling
-
-- Missing worker CLI: dry-run/mock worker path still works; doctor reports missing binary.
-- Tests fail: task becomes `FAILED_FINAL`; no PR is created.
-- Codex review fails: no PR is created.
-- Forbidden path changes: task becomes `FAILED_FINAL`.
-- `gh` unavailable or remote push disabled: system returns `COMPLETED_WITH_PATCH`.
+Expected result: tests pass, no real secrets, and only intentional files are staged.
