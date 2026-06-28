@@ -283,6 +283,7 @@ class ConsoleQueries:
 
     def metrics_efficiency(self, reference_model: str = "opencode-go/glm-5.2") -> dict[str, Any]:
         rows = self._metric_rows()
+        codex = _codex_usage_summary(self.db.list_codex_usage_events(limit=2000))
         total_input = sum(_metric_int(row.get("input_tokens")) for row in rows)
         total_output = sum(_metric_int(row.get("output_tokens")) for row in rows)
         total_cache = sum(_metric_int(row.get("cache_read_input_tokens")) for row in rows)
@@ -353,10 +354,11 @@ class ConsoleQueries:
             if cache_denominator > 0 else 0.0,
             "codex_token_savings_measured": False,
             "codex_token_savings_note": (
-                "World records worker token usage and computed model cost. It does not yet record a "
-                "same-task no-World Codex baseline, so Codex token savings are an inferred capability, "
-                "not a measured metric."
+                "Worker model tokens and costs are measured from task metrics. Codex planning/review "
+                "tokens are locally estimated because Codex quota telemetry is not exposed here. A "
+                "same-task no-World Codex baseline is still required before claiming measured Codex savings."
             ),
+            "codex": codex,
             "by_model": model_rows,
         }
 
@@ -501,6 +503,51 @@ def _tokens_missing(row: dict[str, Any]) -> bool:
         and row.get("output_tokens") is None
         and row.get("cache_read_input_tokens") is None
     )
+
+
+def _codex_usage_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
+    total_input = sum(_metric_int(row.get("input_tokens")) for row in events)
+    total_output = sum(_metric_int(row.get("output_tokens")) for row in events)
+    total_tokens = sum(_metric_int(row.get("total_tokens")) for row in events)
+    planning_tokens = sum(
+        _metric_int(row.get("total_tokens"))
+        for row in events
+        if str(row.get("phase") or "") == "planning_dispatch"
+    )
+    review_tokens = sum(
+        _metric_int(row.get("total_tokens"))
+        for row in events
+        if str(row.get("phase") or "") == "world_review"
+    )
+    actual_review_tokens = sum(
+        _metric_int(row.get("total_tokens"))
+        for row in events
+        if str(row.get("phase") or "") == "world_review" and bool(row.get("actual_codex_used"))
+    )
+    methods = sorted({str(row.get("estimation_method") or "") for row in events if row.get("estimation_method")})
+    baseline_days = 2
+    target_days = 7
+    target_multiplier = target_days / baseline_days
+    required_reduction_pct = (1 - (baseline_days / target_days)) * 100
+    return {
+        "events": len(events),
+        "estimated_input_tokens": total_input,
+        "estimated_output_tokens": total_output,
+        "estimated_total_tokens": total_tokens,
+        "planning_dispatch_tokens": planning_tokens,
+        "world_review_tokens": review_tokens,
+        "actual_codex_review_tokens": actual_review_tokens,
+        "actual_codex_event_count": sum(1 for row in events if bool(row.get("actual_codex_used"))),
+        "measured": False,
+        "estimation_method": ", ".join(methods) if methods else "none",
+        "quota_goal": {
+            "baseline_days": baseline_days,
+            "target_days": target_days,
+            "target_multiplier": round(target_multiplier, 2),
+            "required_codex_reduction_pct": round(required_reduction_pct, 2),
+            "max_codex_share_pct": round(100 - required_reduction_pct, 2),
+        },
+    }
 
 
 def _session_label(task_id: str) -> str:

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .artifacts import ArtifactStore
+from .codex_usage import build_codex_usage_event
 from .config import code_root, ensure_runtime_dirs
 from .constants import DEFAULT_CLAUDE_CMD, DEFAULT_OPENCODE_CMD
 from .db import TaskDB
@@ -270,6 +271,35 @@ class OrchestratorService:
         )
         self.db.append_event(task_id, "created", None, "QUEUED", {"dry_run": dry_run})
         self.artifacts.write_json(task_id, "task.json", task)
+        self._record_codex_usage(
+            build_codex_usage_event(
+                task_id=task_id,
+                phase="planning_dispatch",
+                input_payload={
+                    "project_id": project_id,
+                    "repo_path": project["repo"],
+                    "user_goal": user_goal,
+                    "risk_level": risk_level,
+                    "auto_execute": auto_execute,
+                    "auto_pr": task["auto_pr"],
+                    "dry_run": dry_run,
+                    "force_worker": force_worker,
+                    "force_model": force_model,
+                    "force_variant": force_variant,
+                    "has_images": bool(image_paths or image_base64),
+                },
+                output_payload={
+                    "task_id": task_id,
+                    "status": "QUEUED",
+                    "run_dir": str(run_dir),
+                },
+                metadata={
+                    "measured": False,
+                    "scope": "codex_main_thread_task_spec_and_dispatch",
+                    "goal": "estimate Codex quota consumed before World worker execution",
+                },
+            )
+        )
         if auto_execute:
             self._execute(task, project, dry_run=dry_run)
         return {"task_id": task_id, "status": self.get_task_status(task_id)["status"], "run_dir": str(run_dir)}
@@ -297,6 +327,56 @@ class OrchestratorService:
                 text = Path(path).read_text(encoding="utf-8", errors="replace")
                 result[key] = text[:20000]
         return result
+
+    def _record_codex_usage(self, event: dict[str, Any]) -> None:
+        self.db.record_codex_usage_event(event)
+        phase = str(event.get("phase") or "unknown")
+        self.artifacts.write_json(event["task_id"], f"codex_usage/{phase}.json", event)
+        self.db.append_event(
+            event["task_id"],
+            "codex_usage_recorded",
+            None,
+            None,
+            {
+                "phase": phase,
+                "input_tokens": event.get("input_tokens", 0),
+                "output_tokens": event.get("output_tokens", 0),
+                "total_tokens": event.get("total_tokens", 0),
+                "actual_codex_used": bool(event.get("actual_codex_used")),
+                "estimation_method": event.get("estimation_method"),
+            },
+        )
+
+    def _record_review_codex_usage(
+        self,
+        task_id: str,
+        review_inputs: dict[str, Any],
+        review: dict[str, Any],
+    ) -> None:
+        self._record_codex_usage(
+            build_codex_usage_event(
+                task_id=task_id,
+                phase="world_review",
+                input_payload={
+                    "prompt_prefix": (
+                        "Review this orchestrator task. Output only JSON with keys "
+                        "approved,risk_level,blocking_issues,non_blocking_issues,required_changes,"
+                        "final_recommendation,can_create_pr."
+                    ),
+                    "inputs": review_inputs,
+                },
+                output_payload=review,
+                actual_codex_used=review.get("review_mode") == "codex" and not bool(review.get("degraded")),
+                metadata={
+                    "measured": False,
+                    "review_mode": review.get("review_mode"),
+                    "degraded": bool(review.get("degraded")),
+                    "available": bool(review.get("available")),
+                    "approved": bool(review.get("approved")),
+                    "scope": "codex_review_gate",
+                },
+            )
+        )
 
     def repair_task_artifacts(self, task_id: str | None = None, limit: int = 200) -> dict[str, Any]:
         """Repair run artifacts that drifted from DB state or worker output.
@@ -801,6 +881,19 @@ class OrchestratorService:
             self.artifacts.write_json(task_id, "verify/changed_files.json", verify_result.changed_files)
             review = _degraded_mock_review(task, final_result, dry_run=dry_run)
             self.artifacts.write_json(task_id, "review/review.json", review)
+            self._record_review_codex_usage(
+                task_id,
+                {
+                    "task_id": task_id,
+                    "risk_level": task["risk_level"],
+                    "dry_run": dry_run,
+                    "tests_passed": verify_result.tests_passed,
+                    "forbidden_paths_touched": False,
+                    "changed_files": verify_result.changed_files,
+                    "worker_degraded_mock": True,
+                },
+                review,
+            )
             self.artifacts.write_text(
                 task_id,
                 "final.md",
@@ -876,6 +969,19 @@ class OrchestratorService:
         if _read_only_result_can_finish(task, final_result):
             review = _read_only_review(task)
             self.artifacts.write_json(task_id, "review/review.json", review)
+            self._record_review_codex_usage(
+                task_id,
+                {
+                    "task_id": task_id,
+                    "risk_level": task["risk_level"],
+                    "dry_run": dry_run,
+                    "tests_passed": verify_result.tests_passed,
+                    "forbidden_paths_touched": not forbidden.allowed,
+                    "changed_files": verify_result.changed_files,
+                    "read_only": True,
+                },
+                review,
+            )
             self.artifacts.write_text(task_id, "final.md", _final_md(task, route, final_result.__dict__, verify_result.to_dict(), review))
             if last_attempt:
                 self._write_attempt_metrics(
@@ -907,12 +1013,16 @@ class OrchestratorService:
 
         # ── Review ──
         self._set_status(task_id, "CODEX_REVIEWING", "review_started", {})
-        review = run_codex_review(
-            {"task_id": task_id, "risk_level": task["risk_level"], "dry_run": dry_run,
-             "tests_passed": verify_result.tests_passed, "forbidden_paths_touched": not forbidden.allowed,
-             "changed_files": verify_result.changed_files},
-            Path(task["run_dir"]) / "review" / "review.json",
-        )
+        review_inputs = {
+            "task_id": task_id,
+            "risk_level": task["risk_level"],
+            "dry_run": dry_run,
+            "tests_passed": verify_result.tests_passed,
+            "forbidden_paths_touched": not forbidden.allowed,
+            "changed_files": verify_result.changed_files,
+        }
+        review = run_codex_review(review_inputs, Path(task["run_dir"]) / "review" / "review.json")
+        self._record_review_codex_usage(task_id, review_inputs, review)
         if _review_degraded_blocks_publish(task, review):
             failure = classify_review_failure({**review, "available": False})
             if last_attempt:

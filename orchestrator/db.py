@@ -69,6 +69,20 @@ CREATE TABLE IF NOT EXISTS task_metrics (
   PRIMARY KEY(task_id, attempt_no)
 );
 
+CREATE TABLE IF NOT EXISTS codex_usage_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL,
+  phase TEXT NOT NULL,
+  model TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL,
+  output_tokens INTEGER NOT NULL,
+  total_tokens INTEGER NOT NULL,
+  actual_codex_used BOOLEAN NOT NULL,
+  estimation_method TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  metadata_json TEXT
+);
+
 CREATE TABLE IF NOT EXISTS approval_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id TEXT NOT NULL,
@@ -324,6 +338,71 @@ class TaskDB:
                 [limit],
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def record_codex_usage_event(self, row: dict[str, Any]) -> None:
+        self.init()
+        cols = [
+            "task_id",
+            "phase",
+            "model",
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "actual_codex_used",
+            "estimation_method",
+            "created_at",
+            "metadata_json",
+        ]
+        values = [
+            row.get("task_id"),
+            row.get("phase"),
+            row.get("model", "codex"),
+            int(row.get("input_tokens") or 0),
+            int(row.get("output_tokens") or 0),
+            int(row.get("total_tokens") or 0),
+            bool(row.get("actual_codex_used")),
+            row.get("estimation_method"),
+            row.get("created_at"),
+            json.dumps(_json_safe(row.get("metadata") or row.get("metadata_json") or {}), ensure_ascii=False),
+        ]
+        with self.connect() as con:
+            con.execute(
+                f"INSERT INTO codex_usage_events ({','.join(cols)}) VALUES ({','.join(['?'] * len(cols))})",
+                values,
+            )
+
+    def list_codex_usage_events(
+        self,
+        task_id: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        self.init()
+        limit = max(1, min(int(limit), 2000))
+        params: list[Any] = []
+        where = ""
+        if task_id:
+            where = "WHERE task_id=?"
+            params.append(task_id)
+        with self.connect() as con:
+            rows = con.execute(
+                f"""
+                SELECT * FROM codex_usage_events
+                {where}
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                [*params, limit],
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            raw_metadata = item.pop("metadata_json", None)
+            try:
+                item["metadata"] = json.loads(raw_metadata or "{}")
+            except json.JSONDecodeError:
+                item["metadata"] = {}
+            result.append(item)
+        return result
 
     def model_metrics_summary(self) -> list[dict[str, Any]]:
         self.init()

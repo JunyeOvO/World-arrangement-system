@@ -601,6 +601,30 @@ def test_metrics_efficiency_reports_real_token_cost_and_reference_baseline(tmp_p
         "review_approved": True,
         "created_at": "2026-06-28T13:12:00Z",
     })
+    service.db.record_codex_usage_event({
+        "task_id": "task_efficiency_low",
+        "phase": "planning_dispatch",
+        "model": "codex",
+        "input_tokens": 1200,
+        "output_tokens": 300,
+        "total_tokens": 1500,
+        "actual_codex_used": False,
+        "estimation_method": "utf8_bytes_div_4",
+        "created_at": "2026-06-28T13:12:01Z",
+        "metadata": {"measured": False},
+    })
+    service.db.record_codex_usage_event({
+        "task_id": "task_efficiency_low",
+        "phase": "world_review",
+        "model": "codex",
+        "input_tokens": 2000,
+        "output_tokens": 500,
+        "total_tokens": 2500,
+        "actual_codex_used": True,
+        "estimation_method": "utf8_bytes_div_4",
+        "created_at": "2026-06-28T13:12:02Z",
+        "metadata": {"measured": False, "review_mode": "codex"},
+    })
     api = ConsoleAPI(service)  # type: ignore[arg-type]
 
     status, _, payload = api.handle_get("/api/metrics/efficiency")
@@ -615,5 +639,13 @@ def test_metrics_efficiency_reports_real_token_cost_and_reference_baseline(tmp_p
     assert payload["cache_read_ratio"] == 33.33
     assert payload["missing_token_rows"] == 1
     assert payload["codex_token_savings_measured"] is False
+    assert payload["codex_token_savings_note"] != "[REDACTED]"
+    assert payload["codex"]["estimated_total_tokens"] == 4000
+    assert payload["codex"]["planning_dispatch_tokens"] == 1500
+    assert payload["codex"]["world_review_tokens"] == 2500
+    assert payload["codex"]["actual_codex_review_tokens"] == 2500
+    assert payload["codex"]["actual_codex_event_count"] == 1
+    assert payload["codex"]["quota_goal"]["target_multiplier"] == 3.5
+    assert payload["codex"]["quota_goal"]["required_codex_reduction_pct"] == 71.43
     assert payload["by_model"][0]["model"] == "Deepseek-V4-flash"
     assert payload["by_model"][0]["savings_usd"] == 1.8006

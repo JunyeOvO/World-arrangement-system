@@ -14,6 +14,19 @@ PUBLIC_METRIC_KEYS = {
     "total_tokens",
     "missing_token_rows",
     "codex_token_savings_measured",
+    "estimated_input_tokens",
+    "estimated_output_tokens",
+    "estimated_total_tokens",
+    "planning_dispatch_tokens",
+    "world_review_tokens",
+    "actual_codex_review_tokens",
+    "actual_codex_event_count",
+    "required_codex_reduction_pct",
+    "max_codex_share_pct",
+}
+PUBLIC_TEXT_KEYS = {
+    "codex_token_savings_note",
+    "estimation_method",
 }
 
 
@@ -24,6 +37,8 @@ def redact(value: Any) -> Any:
             key_text = str(key)
             if key_text in PUBLIC_METRIC_KEYS and isinstance(item, (bool, int, float)):
                 redacted[key_text] = item
+            elif key_text in PUBLIC_TEXT_KEYS and isinstance(item, str):
+                redacted[key_text] = _redact_text(item)
             elif SECRET_KEY_RE.search(key_text):
                 redacted[key_text] = "[REDACTED]"
             else:

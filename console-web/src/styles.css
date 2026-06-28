@@ -305,6 +305,55 @@ small {
   overflow-wrap: anywhere;
 }
 
+.codex-budget {
+  margin-top: 12px;
+  border: 1px solid #d9e1ea;
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px;
+}
+
+.codex-budget-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.codex-budget h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.codex-budget p {
+  max-width: 900px;
+  margin: 5px 0 0;
+  color: #66758a;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.codex-budget-head > span {
+  flex: 0 0 auto;
+  border: 1px solid #d9e1ea;
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: #4c5868;
+  background: #f7f9fc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.codex-kpis {
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+}
+
+.codex-kpis .summary-kpi strong {
+  font-size: 20px;
+  overflow-wrap: anywhere;
+}
+
 .efficiency-table {
   margin-top: 12px;
 }

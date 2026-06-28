@@ -92,6 +92,23 @@ function EfficiencyPanel({ efficiency }: { efficiency: MetricsEfficiency | null 
             <MetricKpi label="Cache read" value={`${efficiency.cache_read_ratio.toFixed(1)}%`} icon={<ChartColumn size={18} />} />
             <MetricKpi label="Missing token rows" value={efficiency.missing_token_rows.toString()} icon={<Clock3 size={18} />} />
           </div>
+          <div className="codex-budget">
+            <div className="codex-budget-head">
+              <div>
+                <h3>Codex Budget</h3>
+                <p>{efficiency.codex_token_savings_note}</p>
+              </div>
+              <span>{efficiency.codex.estimation_method}</span>
+            </div>
+            <div className="summary-kpis codex-kpis">
+              <MetricKpi label="Codex est. tokens" value={formatNumber(efficiency.codex.estimated_total_tokens)} icon={<ChartColumn size={18} />} />
+              <MetricKpi label="Planning dispatch" value={formatNumber(efficiency.codex.planning_dispatch_tokens)} icon={<Gauge size={18} />} />
+              <MetricKpi label="World review" value={formatNumber(efficiency.codex.world_review_tokens)} icon={<Scale size={18} />} />
+              <MetricKpi label="Actual Codex review" value={formatNumber(efficiency.codex.actual_codex_review_tokens)} icon={<Clock3 size={18} />} />
+              <MetricKpi label="Target cut" value={`${efficiency.codex.quota_goal.required_codex_reduction_pct.toFixed(1)}%`} icon={<Gauge size={18} />} />
+              <MetricKpi label="Max Codex share" value={`${efficiency.codex.quota_goal.max_codex_share_pct.toFixed(1)}%`} icon={<Scale size={18} />} />
+            </div>
+          </div>
           <div className="table-wrap efficiency-table">
             <table>
               <thead>

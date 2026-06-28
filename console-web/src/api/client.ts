@@ -105,6 +105,25 @@ export type MetricsEfficiency = {
   cache_read_ratio: number;
   codex_token_savings_measured: boolean;
   codex_token_savings_note: string;
+  codex: {
+    events: number;
+    estimated_input_tokens: number;
+    estimated_output_tokens: number;
+    estimated_total_tokens: number;
+    planning_dispatch_tokens: number;
+    world_review_tokens: number;
+    actual_codex_review_tokens: number;
+    actual_codex_event_count: number;
+    measured: boolean;
+    estimation_method: string;
+    quota_goal: {
+      baseline_days: number;
+      target_days: number;
+      target_multiplier: number;
+      required_codex_reduction_pct: number;
+      max_codex_share_pct: number;
+    };
+  };
   by_model: Array<{
     worker: string;
     model: string;

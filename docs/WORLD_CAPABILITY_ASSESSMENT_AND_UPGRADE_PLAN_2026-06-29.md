@@ -67,6 +67,28 @@ World does not yet strictly prove total token savings versus manual Codex execut
 - Codex main-thread token saving: inferred, not measured.
 - End-to-end business productivity gain: promising but not yet benchmarked.
 
+## Codex Quota Extension Target
+
+The explicit product goal is to use World as an execution backend that keeps Codex focused on lightweight planning, dispatch, and final reading, so a weekly Codex quota that currently lasts about 2 days can last 7 days.
+
+That target requires a Codex-side reduction of:
+
+| Target | Value |
+|---|---:|
+| Current usable time | 2 days |
+| Target usable time | 7 days |
+| Required multiplier | 3.5x |
+| Required Codex token reduction | 71.43% |
+| Maximum Codex share after optimization | 28.57% |
+
+World now records a separate Codex usage ledger for:
+
+- `planning_dispatch`: estimated Codex tokens used to normalize the request and submit the task to World.
+- `world_review`: estimated Codex tokens used for the review gate.
+- `actual_codex_review_tokens`: the subset where the review really used Codex instead of local fallback.
+
+Important boundary: worker LLM input/output/cache tokens are real task metrics and costs are computed from configured model pricing. Codex planning/review tokens are currently local estimates using `utf8_bytes_div_4`, because this environment does not expose Codex quota telemetry. These estimates are useful for trend control and budget design, but they are not official Codex usage.
+
 ## Real Development Readiness
 
 Current suitable use:
@@ -116,7 +138,16 @@ Goal: decide whether low-cost routes are actually good enough, not merely cheap.
 
 ### P2: Codex Baseline Measurement
 
-Add an optional baseline mode:
+Status: partially implemented.
+
+Implemented:
+
+- Record estimated Codex planning/dispatch tokens per task.
+- Record estimated Codex review input/output tokens per review path.
+- Distinguish actual Codex review events from local fallback review.
+- Surface Codex budget metrics and the 2-day-to-7-day target in Console.
+
+Remaining optional baseline mode:
 
 - record estimated manual Codex prompt tokens for each `/world` task
 - record dispatcher prompt length
@@ -187,6 +218,5 @@ Goal: prove whether World helps real development instead of relying on anecdotal
 - Console shows computed cost, not adapter-reported cost.
 - Console shows real token usage.
 - Console shows same-token GLM baseline and savings rate.
-- Console clearly states Codex token savings are not directly measured yet.
+- Console separately shows Codex planning/review estimates and clearly states Codex token savings are not directly measured yet.
 - Tests cover token-cost calculation and alias merging.
-
