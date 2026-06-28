@@ -204,6 +204,7 @@ small {
 .detail-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
   gap: 14px;
 }
 
@@ -217,13 +218,13 @@ small {
   grid-column: 1 / -1;
 }
 
-.output-panel {
-  grid-column: 1 / -1;
+.output-panel,
+.artifacts-panel {
+  min-height: 0;
 }
 
-.output-panel pre {
-  max-height: 560px;
-  white-space: pre-wrap;
+.artifacts-panel {
+  grid-column: 1 / -1;
 }
 
 .metrics-summary-panel,
@@ -429,6 +430,66 @@ pre {
   border-radius: 6px;
   padding: 12px;
   font-size: 12px;
+}
+
+.markdown-preview {
+  max-height: 560px;
+  overflow: auto;
+  background: #fff;
+  color: #111827;
+  border: 1px solid #d9e1ea;
+  border-radius: 6px;
+  padding: 16px 18px;
+  line-height: 1.6;
+}
+
+.markdown-preview h1,
+.markdown-preview h2,
+.markdown-preview h3,
+.markdown-preview p,
+.markdown-preview ul,
+.markdown-preview pre {
+  margin-top: 0;
+}
+
+.markdown-preview h1 {
+  font-size: 22px;
+  margin-bottom: 12px;
+}
+
+.markdown-preview h2 {
+  font-size: 18px;
+  margin-bottom: 10px;
+}
+
+.markdown-preview h3 {
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+
+.markdown-preview p,
+.markdown-preview li {
+  color: #1d2433;
+  font-size: 14px;
+}
+
+.markdown-preview ul {
+  padding-left: 20px;
+}
+
+.markdown-preview code {
+  color: #111827;
+  background: #eef2f6;
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.markdown-preview pre {
+  max-height: 320px;
+  color: #111827;
+  background: #f7f9fc;
+  border: 1px solid #dfe6ef;
+  white-space: pre-wrap;
 }
 
 .timeline {

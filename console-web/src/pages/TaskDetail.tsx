@@ -58,7 +58,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
       </section>
       <section className="panel output-panel">
         <h2>Output</h2>
-        {output ? <pre>{output}</pre> : <p>{outputError || "Loading output..."}</p>}
+        {output ? <MarkdownPreview source={output} /> : <p>{outputError || "Loading output..."}</p>}
       </section>
       <section className="panel">
         <h2>Verify</h2>
@@ -68,7 +68,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
         <h2>Review</h2>
         <pre>{JSON.stringify(detail.review ?? {}, null, 2)}</pre>
       </section>
-      <section className="panel">
+      <section className="panel artifacts-panel">
         <h2>Artifacts</h2>
         <div className="artifact-list">
           {detail.artifacts.map((artifact) => <a href={artifact.url} key={artifact.path}>{artifact.path}</a>)}
@@ -76,4 +76,120 @@ export function TaskDetail({ taskId }: { taskId: string }) {
       </section>
     </div>
   );
+}
+
+function MarkdownPreview({ source }: { source: string }) {
+  const blocks = parseMarkdownBlocks(source);
+  return (
+    <div className="markdown-preview">
+      {blocks.map((block, index) => {
+        if (block.type === "h1") return <h1 key={index}>{block.text}</h1>;
+        if (block.type === "h2") return <h2 key={index}>{block.text}</h2>;
+        if (block.type === "h3") return <h3 key={index}>{block.text}</h3>;
+        if (block.type === "list") {
+          return (
+            <ul key={index}>
+              {block.items.map((item, itemIndex) => <li key={itemIndex}>{renderInlineMarkdown(item)}</li>)}
+            </ul>
+          );
+        }
+        if (block.type === "code") return <pre key={index}><code>{block.text}</code></pre>;
+        return <p key={index}>{renderInlineMarkdown(block.text)}</p>;
+      })}
+    </div>
+  );
+}
+
+type MarkdownBlock =
+  | { type: "h1" | "h2" | "h3" | "paragraph" | "code"; text: string }
+  | { type: "list"; items: string[] };
+
+function parseMarkdownBlocks(source: string): MarkdownBlock[] {
+  const blocks: MarkdownBlock[] = [];
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
+  let paragraph: string[] = [];
+  let list: string[] = [];
+  let code: string[] = [];
+  let inCode = false;
+
+  const flushParagraph = () => {
+    if (paragraph.length) {
+      blocks.push({ type: "paragraph", text: paragraph.join(" ") });
+      paragraph = [];
+    }
+  };
+  const flushList = () => {
+    if (list.length) {
+      blocks.push({ type: "list", items: list });
+      list = [];
+    }
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith("```")) {
+      if (inCode) {
+        blocks.push({ type: "code", text: code.join("\n") });
+        code = [];
+        inCode = false;
+      } else {
+        flushParagraph();
+        flushList();
+        inCode = true;
+      }
+      continue;
+    }
+    if (inCode) {
+      code.push(line);
+      continue;
+    }
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+    if (trimmed.startsWith("### ")) {
+      flushParagraph();
+      flushList();
+      blocks.push({ type: "h3", text: trimmed.slice(4) });
+      continue;
+    }
+    if (trimmed.startsWith("## ")) {
+      flushParagraph();
+      flushList();
+      blocks.push({ type: "h2", text: trimmed.slice(3) });
+      continue;
+    }
+    if (trimmed.startsWith("# ")) {
+      flushParagraph();
+      flushList();
+      blocks.push({ type: "h1", text: trimmed.slice(2) });
+      continue;
+    }
+    if (trimmed.startsWith("- ")) {
+      flushParagraph();
+      list.push(trimmed.slice(2));
+      continue;
+    }
+    paragraph.push(trimmed);
+  }
+  if (inCode) blocks.push({ type: "code", text: code.join("\n") });
+  flushParagraph();
+  flushList();
+  return blocks;
+}
+
+function renderInlineMarkdown(text: string) {
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return <code key={index}>{part.slice(1, -1)}</code>;
+    }
+    return part;
+  });
 }
