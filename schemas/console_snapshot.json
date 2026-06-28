@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://world.local/schemas/console_snapshot.json",
+  "type": "object",
+  "required": ["health", "tasks", "alerts", "heartbeats", "metrics", "models"],
+  "properties": {
+    "health": {
+      "type": "object",
+      "required": ["status", "running", "queued", "failed", "approval_waiting", "open_alerts", "cost_today_usd"],
+      "properties": {
+        "status": {"type": "string"},
+        "running": {"type": "integer"},
+        "queued": {"type": "integer"},
+        "failed": {"type": "integer"},
+        "approval_waiting": {"type": "integer"},
+        "open_alerts": {"type": "integer"},
+        "cost_today_usd": {"type": "number"}
+      }
+    },
+    "tasks": {"type": "array"},
+    "alerts": {"type": "array"},
+    "heartbeats": {"type": "array"},
+    "metrics": {"type": "object"},
+    "models": {"type": "array"}
+  },
+  "additionalProperties": true
+}
+

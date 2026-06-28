@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://world.local/schemas/console_event.json",
+  "type": "object",
+  "required": ["task_id", "event_type", "payload"],
+  "properties": {
+    "id": {"type": ["integer", "null"]},
+    "task_id": {"type": ["string", "null"]},
+    "at": {"type": ["string", "null"]},
+    "event_type": {"type": "string"},
+    "from_state": {"type": ["string", "null"]},
+    "to_state": {"type": ["string", "null"]},
+    "payload": {"type": "object"}
+  },
+  "additionalProperties": true
+}
+

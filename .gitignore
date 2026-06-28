@@ -28,6 +28,10 @@ logs/
 *.log
 *.jsonl
 
+# Frontend local dependencies/cache
+node_modules/
+*.tsbuildinfo
+
 # Local OS/editor files
 .DS_Store
 Thumbs.db

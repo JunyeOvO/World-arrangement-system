@@ -19,6 +19,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("doctor")
+    serve_console = sub.add_parser("serve-console")
+    serve_console.add_argument("--host", default="127.0.0.1")
+    serve_console.add_argument("--port", type=int, default=8765)
     world_doctor = sub.add_parser("world-doctor")
     world_doctor.add_argument("--repo-path", default=None)
     world_bootstrap = sub.add_parser("world-bootstrap")
@@ -64,6 +67,9 @@ def main(argv: list[str] | None = None) -> int:
     service = OrchestratorService()
     if args.cmd == "doctor":
         return _doctor()
+    if args.cmd == "serve-console":
+        from .console.app import main as console_main
+        return console_main(["--host", args.host, "--port", str(args.port)])
     if args.cmd == "world-doctor":
         return _print(service.world_doctor(args.repo_path))
     if args.cmd == "world-bootstrap":

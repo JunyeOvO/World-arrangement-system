@@ -134,6 +134,34 @@ CREATE TABLE IF NOT EXISTS policy_suggestions (
   created_at TEXT NOT NULL,
   decided_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS worker_heartbeats (
+  worker_id TEXT,
+  task_id TEXT,
+  attempt_id TEXT,
+  ts TEXT,
+  status TEXT,
+  phase TEXT,
+  pid INTEGER,
+  model_key TEXT,
+  cost_usd REAL,
+  turns INTEGER,
+  last_event_id TEXT,
+  PRIMARY KEY(worker_id, attempt_id)
+);
+
+CREATE TABLE IF NOT EXISTS system_alerts (
+  alert_id TEXT PRIMARY KEY,
+  ts TEXT,
+  severity TEXT,
+  source TEXT,
+  task_id TEXT,
+  rule_id TEXT,
+  title TEXT,
+  message TEXT,
+  status TEXT,
+  resolved_at TEXT
+);
 """
 
 
@@ -423,6 +451,160 @@ class TaskDB:
                 "UPDATE policy_suggestions SET status=?, decided_at=? WHERE id=?",
                 [status, decided_at, suggestion_id],
             )
+
+    # -- Console methods --
+
+    def list_tasks(
+        self,
+        status: str | None = None,
+        project_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        self.init()
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status:
+            clauses.append("status=?")
+            params.append(status)
+        if project_id:
+            clauses.append("project_id=?")
+            params.append(project_id)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        limit = max(1, min(int(limit), 500))
+        with self.connect() as con:
+            rows = con.execute(
+                f"SELECT * FROM tasks {where} ORDER BY updated_at DESC, created_at DESC LIMIT ?",
+                [*params, limit],
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_recent_events(self, limit: int = 100, after_id: int | None = None) -> list[dict[str, Any]]:
+        self.init()
+        limit = max(1, min(int(limit), 1000))
+        with self.connect() as con:
+            if after_id is None:
+                rows = con.execute(
+                    "SELECT * FROM task_events ORDER BY id DESC LIMIT ?",
+                    [limit],
+                ).fetchall()
+                return [dict(row) for row in reversed(rows)]
+            rows = con.execute(
+                "SELECT * FROM task_events WHERE id>? ORDER BY id ASC LIMIT ?",
+                [after_id, limit],
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_audit_events(
+        self,
+        task_id: str | None = None,
+        action: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        self.init()
+        clauses: list[str] = []
+        params: list[Any] = []
+        if task_id:
+            clauses.append("task_id=?")
+            params.append(task_id)
+        if action:
+            clauses.append("event_type=?")
+            params.append(action)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        limit = max(1, min(int(limit), 500))
+        with self.connect() as con:
+            rows = con.execute(
+                f"SELECT * FROM task_events {where} ORDER BY id DESC LIMIT ?",
+                [*params, limit],
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def upsert_worker_heartbeat(self, row: dict[str, Any]) -> None:
+        self.init()
+        cols = [
+            "worker_id",
+            "task_id",
+            "attempt_id",
+            "ts",
+            "status",
+            "phase",
+            "pid",
+            "model_key",
+            "cost_usd",
+            "turns",
+            "last_event_id",
+        ]
+        values = [row.get(c) for c in cols]
+        assignments = ", ".join(f"{c}=excluded.{c}" for c in cols[3:])
+        with self.connect() as con:
+            con.execute(
+                f"""
+                INSERT INTO worker_heartbeats ({','.join(cols)})
+                VALUES ({','.join(['?'] * len(cols))})
+                ON CONFLICT(worker_id, attempt_id) DO UPDATE SET {assignments}
+                """,
+                values,
+            )
+
+    def list_worker_heartbeats(self, limit: int = 100) -> list[dict[str, Any]]:
+        self.init()
+        limit = max(1, min(int(limit), 500))
+        with self.connect() as con:
+            rows = con.execute(
+                "SELECT * FROM worker_heartbeats ORDER BY ts DESC LIMIT ?",
+                [limit],
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def upsert_system_alert(self, row: dict[str, Any]) -> None:
+        self.init()
+        cols = [
+            "alert_id",
+            "ts",
+            "severity",
+            "source",
+            "task_id",
+            "rule_id",
+            "title",
+            "message",
+            "status",
+            "resolved_at",
+        ]
+        values = [row.get(c) for c in cols]
+        assignments = ", ".join(f"{c}=excluded.{c}" for c in cols[1:])
+        with self.connect() as con:
+            con.execute(
+                f"""
+                INSERT INTO system_alerts ({','.join(cols)})
+                VALUES ({','.join(['?'] * len(cols))})
+                ON CONFLICT(alert_id) DO UPDATE SET {assignments}
+                """,
+                values,
+            )
+
+    def list_system_alerts(self, status: str | None = "open", limit: int = 100) -> list[dict[str, Any]]:
+        self.init()
+        limit = max(1, min(int(limit), 500))
+        with self.connect() as con:
+            if status:
+                rows = con.execute(
+                    "SELECT * FROM system_alerts WHERE status=? ORDER BY ts DESC LIMIT ?",
+                    [status, limit],
+                ).fetchall()
+            else:
+                rows = con.execute(
+                    "SELECT * FROM system_alerts ORDER BY ts DESC LIMIT ?",
+                    [limit],
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def resolve_system_alert(self, alert_id: str, resolved_at: str) -> bool:
+        self.init()
+        with self.connect() as con:
+            cur = con.execute(
+                "UPDATE system_alerts SET status='resolved', resolved_at=? WHERE alert_id=?",
+                [resolved_at, alert_id],
+            )
+        return cur.rowcount > 0
 
 
 def _json_safe(value: Any) -> Any:
