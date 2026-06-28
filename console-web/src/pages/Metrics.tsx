@@ -1,5 +1,5 @@
 import { CSSProperties, useEffect, useMemo, useState } from "react";
-import { ChartColumn } from "lucide-react";
+import { ChartColumn, CircleDollarSign, Clock3, Gauge } from "lucide-react";
 import { api, ConsoleSnapshot, MetricsUsage } from "../api/client";
 
 export function Metrics({ snapshot }: { snapshot: ConsoleSnapshot }) {
@@ -12,14 +12,15 @@ export function Metrics({ snapshot }: { snapshot: ConsoleSnapshot }) {
 
   return (
     <div className="metrics-page">
-      <section className="panel">
-        <h2>Summary</h2>
-        <dl>
-          <dt>Attempts</dt><dd>{snapshot.metrics.attempts}</dd>
-          <dt>Total cost</dt><dd>${snapshot.metrics.total_cost_usd.toFixed(4)}</dd>
-          <dt>P95 duration</dt><dd>{snapshot.metrics.p95_duration_ms} ms</dd>
-        </dl>
+      <section className="panel metrics-summary-panel">
+        <h2>Usage Summary</h2>
+        <div className="summary-kpis">
+          <MetricKpi label="Attempts" value={snapshot.metrics.attempts.toString()} icon={<Gauge size={18} />} />
+          <MetricKpi label="Total cost" value={`$${snapshot.metrics.total_cost_usd.toFixed(4)}`} icon={<CircleDollarSign size={18} />} />
+          <MetricKpi label="P95 duration" value={`${snapshot.metrics.p95_duration_ms} ms`} icon={<Clock3 size={18} />} />
+        </div>
       </section>
+      <ModelSummary models={snapshot.models} />
       <section className="panel metrics-wide">
         <h2>Cost by Model</h2>
         {error && <div className="banner">{error}</div>}
@@ -29,26 +30,43 @@ export function Metrics({ snapshot }: { snapshot: ConsoleSnapshot }) {
         <h2>Model Calls</h2>
         <UsageTable usage={usage} />
       </section>
-      <section className="panel">
-        <h2>Models</h2>
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>Worker</th><th>Model</th><th>Attempts</th><th>Success</th><th>Avg Cost</th></tr></thead>
-            <tbody>
-              {snapshot.models.map((model) => (
-                <tr key={`${model.worker}-${model.model}`}>
-                  <td>{model.worker}</td>
-                  <td>{model.model}</td>
-                  <td>{model.attempts}</td>
-                  <td>{((model.success_rate ?? 0) * 100).toFixed(1)}%</td>
-                  <td>${(model.avg_cost_usd ?? 0).toFixed(4)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
     </div>
+  );
+}
+
+function MetricKpi({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
+  return (
+    <div className="summary-kpi">
+      <span>{icon}</span>
+      <small>{label}</small>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function ModelSummary({ models }: { models: ConsoleSnapshot["models"] }) {
+  return (
+    <section className="panel model-summary-panel">
+      <div className="panel-head">
+        <h2>Models</h2>
+        <span className="process-count">{models.length}</span>
+      </div>
+      <div className="compact-models">
+        {models.length === 0 && <div className="compact-empty">No model metrics yet</div>}
+        {models.slice(0, 4).map((model) => (
+          <div className="compact-model-row" key={`${model.worker}-${model.model}`}>
+            <div>
+              <strong>{model.model || "unknown"}</strong>
+              <small>{model.worker || "worker pending"}</small>
+            </div>
+            <div>
+              <span>{model.attempts}</span>
+              <small>{((model.success_rate ?? 0) * 100).toFixed(0)}%</small>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 

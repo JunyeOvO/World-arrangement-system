@@ -209,7 +209,7 @@ small {
 
 .metrics-page {
   display: grid;
-  grid-template-columns: minmax(220px, 340px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 320px;
   gap: 14px;
 }
 
@@ -217,15 +217,93 @@ small {
   grid-column: 1 / -1;
 }
 
+.metrics-summary-panel,
+.model-summary-panel {
+  min-height: 150px;
+}
+
+.summary-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.summary-kpi {
+  min-height: 86px;
+  border: 1px solid #e0e7ef;
+  border-radius: 8px;
+  background: #fbfcfe;
+  padding: 13px;
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 5px 8px;
+}
+
+.summary-kpi span {
+  color: #536579;
+}
+
+.summary-kpi small {
+  color: #66758a;
+  margin: 0;
+}
+
+.summary-kpi strong {
+  grid-column: 2;
+  font-size: 22px;
+}
+
+.compact-models {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.compact-model-row,
+.compact-empty {
+  border: 1px solid #e0e7ef;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fbfcfe;
+}
+
+.compact-model-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.compact-model-row strong {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
+.compact-model-row span {
+  font-weight: 700;
+}
+
+.compact-empty {
+  min-height: 88px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #66758a;
+}
+
 .cost-chart {
   border: 1px solid #d9e1ea;
   border-radius: 6px;
   padding: 22px 24px 16px;
+  background: #fbfcfe;
 }
 
 .chart-grid {
   position: relative;
-  height: 340px;
+  height: 300px;
   border-bottom: 1px solid #cfd7e2;
   margin-left: 42px;
 }
