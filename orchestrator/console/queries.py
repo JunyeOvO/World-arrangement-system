@@ -15,6 +15,7 @@ from orchestrator.dashboard_status import (
 )
 from orchestrator.db import TaskDB
 
+from .display_names import display_route_tree
 from .alerts import evaluate_alerts
 from .serializers import (
     alert_view,
@@ -157,7 +158,7 @@ class ConsoleQueries:
         return {
             "task": _with_runtime_liveness(task_summary(task), live_task_ids, task),
             "timeline": events,
-            "route_decision": route,
+            "route_decision": display_route_tree(route),
             "approval": approval,
             "verify": verify,
             "review": review,

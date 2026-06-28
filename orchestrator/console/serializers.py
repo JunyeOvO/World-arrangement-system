@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .display_names import display_agent_name, display_model_name
 from .redaction import redact
 
 
@@ -42,8 +43,8 @@ def task_summary(row: dict[str, Any]) -> dict[str, Any]:
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "route": {
-            "worker": row.get("route_worker"),
-            "model": row.get("route_model"),
+            "worker": display_agent_name(row.get("route_worker")),
+            "model": display_model_name(row.get("route_model")),
             "variant": row.get("route_variant"),
         },
         "pr_url": row.get("pr_url"),
@@ -64,6 +65,8 @@ def event_view(row: dict[str, Any]) -> dict[str, Any]:
 
 def metric_view(row: dict[str, Any]) -> dict[str, Any]:
     value = redact(dict(row))
+    value["worker"] = display_agent_name(row.get("worker"))
+    value["model"] = display_model_name(row.get("model"))
     for key in ("input_tokens", "output_tokens", "cache_read_input_tokens"):
         value[key] = row.get(key)
     return value
@@ -74,7 +77,9 @@ def alert_view(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def heartbeat_view(row: dict[str, Any]) -> dict[str, Any]:
-    return redact(dict(row))
+    value = redact(dict(row))
+    value["model_key"] = display_model_name(row.get("model_key"))
+    return value
 
 
 def artifact_listing(task_id: str, index: dict[str, str]) -> list[dict[str, str]]:

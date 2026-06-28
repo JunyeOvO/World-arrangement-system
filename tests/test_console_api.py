@@ -294,13 +294,26 @@ def test_dashboard_tasks_can_filter_by_big_status(tmp_path: Path):
 def test_task_detail_includes_lifecycle_and_artifacts(tmp_path: Path):
     service = StubService(tmp_path)
     task_id = _create_task(service)
+    service.artifacts.write_json(task_id, "route.json", {
+        "selected_worker": "opencode",
+        "selected_model": "opencode_go_glm52",
+        "agent_llm": "claude code + deepseek V4 pro",
+        "fallback_models": ["deepseek_pro", "mimo_v25"],
+        "reason": "ClaudeCodeWorker can escalate to OpenCodeWorker with opencode-go/glm-5.2",
+    })
     api = ConsoleAPI(service)  # type: ignore[arg-type]
 
     status, _, payload = api.handle_get(f"/api/tasks/{task_id}")
 
     assert status == 200
     assert payload["task"]["task_id"] == task_id
-    assert payload["route_decision"]["selected_worker"] == "opencode"
+    assert payload["task"]["route"]["worker"] == "Opencode"
+    assert payload["task"]["route"]["model"] == "GLM-5.2"
+    assert payload["route_decision"]["selected_worker"] == "Opencode"
+    assert payload["route_decision"]["selected_model"] == "GLM-5.2"
+    assert payload["route_decision"]["agent_llm"] == "Claudecode + Deepseek-V4-pro"
+    assert payload["route_decision"]["fallback_models"] == ["Deepseek-V4-pro", "Mimo-V2.5"]
+    assert payload["route_decision"]["reason"] == "Claudecode can escalate to Opencode with GLM-5.2"
     assert payload["timeline"][0]["event_type"] == "created"
     assert payload["artifacts"][0]["url"].startswith(f"/api/tasks/{task_id}/artifacts/")
 
@@ -459,10 +472,12 @@ def test_metrics_usage_returns_cost_series_and_call_rows(tmp_path: Path):
 
     assert status == 200
     assert payload["cost_series"]["dates"] == ["2026-06-28"]
-    assert payload["cost_series"]["models"] == ["glm-5.2"]
+    assert payload["cost_series"]["models"] == ["GLM-5.2"]
     assert payload["cost_series"]["rows"] == [
-        {"date": "2026-06-28", "model": "glm-5.2", "cost_usd": 0.0139}
+        {"date": "2026-06-28", "model": "GLM-5.2", "cost_usd": 0.0139}
     ]
+    assert payload["calls"][0]["worker"] == "Opencode"
+    assert payload["calls"][0]["model"] == "GLM-5.2"
     assert payload["calls"][0]["input_tokens"] == 45978
     assert payload["calls"][0]["output_tokens"] == 74
     assert payload["calls"][0]["session"] == "_metrics"
