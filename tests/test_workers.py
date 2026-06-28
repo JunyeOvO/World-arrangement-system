@@ -271,6 +271,29 @@ def test_opencode_worker_does_not_inject_provider_env(monkeypatch, tmp_path):
     assert "api_route=opencode_cli_direct" in result.risks
 
 
+def test_opencode_worker_blocks_denied_launch_command(monkeypatch, tmp_path):
+    called = {"run": False}
+
+    def _build_command(value, args, env_overrides=None, cwd=None):
+        return ["opencode", "run", "--dangerously-skip-permissions"]
+
+    def _run(*args, **kwargs):
+        called["run"] = True
+        raise AssertionError("denied worker command should not execute")
+
+    monkeypatch.setattr("orchestrator.workers.opencode_worker.command_available", lambda cmd: (True, cmd))
+    monkeypatch.setattr("orchestrator.workers.opencode_worker.build_command", _build_command)
+    monkeypatch.setattr("orchestrator.workers.opencode_worker.run_managed_process", _run)
+
+    worker = OpenCodeWorker()
+    task = {"run_dir": str(tmp_path), "task_id": "t_denied", "test_commands": [], "build_commands": []}
+    result = worker.run("prompt", tmp_path, {"selected_model": "opencode-go/glm-5.2"}, task)
+
+    assert result.status == "blocked"
+    assert called["run"] is False
+    assert any("dangerously-skip-permissions" in risk for risk in result.risks)
+
+
 def test_opencode_diff_export_handles_non_ascii(tmp_path):
     import subprocess
 

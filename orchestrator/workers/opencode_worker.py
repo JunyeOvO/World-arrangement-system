@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 from pathlib import Path
 
 from .base import Worker, WorkerResult
@@ -10,6 +11,7 @@ from ..command_utils import build_command, command_available, subprocess_cwd, su
 from ..constants import DEFAULT_OPENCODE_CMD
 from ..env_profiles import model_spec
 from ..llm_capability import capability_profile
+from ..permissions import check_worker_launch_command
 from ..process_control import run_managed_process
 
 
@@ -130,6 +132,21 @@ class OpenCodeWorker(Worker):
         # (e.g. "default") to reach the opencode CLI. Bypasses of _normalize_variant
         # trip this and fail the worker fast with a clear error.
         assert_valid_opencode_args(cmd)
+        command_check = check_worker_launch_command(self.name, shlex.join(str(part) for part in cmd))
+        if not command_check.allowed:
+            return WorkerResult(
+                "blocked",
+                "OpenCode worker command denied by static permissions",
+                [],
+                task.get("test_commands", []),
+                [command_check.reason, "api_route=opencode_cli_direct"],
+                True,
+                str(stdout_path),
+                str(stderr_path),
+                patch_file=None,
+                tests_run=[],
+                rollback_notes=None,
+            )
         timeout_sec = int(route.get("timeout_sec", 2700))
         proc = run_managed_process(
             cmd,

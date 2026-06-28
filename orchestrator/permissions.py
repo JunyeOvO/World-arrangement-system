@@ -24,6 +24,37 @@ class PermissionCheck:
     allowed: bool
     reason: str = ""
     requires_ask: bool = False
+    matched_pattern: str = ""
+    action: str = ""
+    target: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "allowed": self.allowed,
+            "reason": self.reason,
+            "requires_ask": self.requires_ask,
+            "matched_pattern": self.matched_pattern,
+            "action": self.action,
+            "target": self.target,
+        }
+
+
+@dataclass
+class PermissionReview:
+    worker: str
+    allowed: bool = True
+    requires_ask: bool = False
+    checks: list[PermissionCheck] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "worker": self.worker,
+            "allowed": self.allowed,
+            "requires_ask": self.requires_ask,
+            "checks": [check.to_dict() for check in self.checks],
+            "denied": [check.to_dict() for check in self.checks if not check.allowed],
+            "ask": [check.to_dict() for check in self.checks if check.requires_ask],
+        }
 
 
 @dataclass
@@ -102,20 +133,32 @@ def check_write_path(worker_name: str, file_path: str) -> PermissionCheck:
     # Deny takes priority
     for pattern in wp.write_deny:
         if _path_matches(file_path, pattern):
-            return PermissionCheck(False, f"write denied by pattern: {pattern}")
+            return PermissionCheck(False, f"write denied by pattern: {pattern}", False, pattern, "write", file_path)
 
     # Ask (dependency/config files)
     for pattern in wp.write_ask:
         if _path_matches(file_path, pattern):
-            return PermissionCheck(True, f"write requires ask for: {pattern}", requires_ask=True)
+            return PermissionCheck(True, f"write requires ask for: {pattern}", True, pattern, "write", file_path)
 
     # Explicit allow
     for pattern in wp.write_allow:
         if _path_matches(file_path, pattern):
-            return PermissionCheck(True, f"write allowed by pattern: {pattern}")
+            return PermissionCheck(True, f"write allowed by pattern: {pattern}", False, pattern, "write", file_path)
 
     # Default deny (not in any allow list)
-    return PermissionCheck(False, f"write path not in allow list: {file_path}")
+    return PermissionCheck(False, f"write path not in allow list: {file_path}", False, "", "write", file_path)
+
+
+def check_write_paths(worker_name: str, file_paths: list[str]) -> PermissionReview:
+    review = PermissionReview(worker=worker_name)
+    for file_path in file_paths:
+        check = check_write_path(worker_name, file_path)
+        review.checks.append(check)
+        if not check.allowed:
+            review.allowed = False
+        if check.requires_ask:
+            review.requires_ask = True
+    return review
 
 
 def check_bash_command(worker_name: str, command: str) -> PermissionCheck:
@@ -126,20 +169,34 @@ def check_bash_command(worker_name: str, command: str) -> PermissionCheck:
     # Deny takes priority
     for pattern in wp.bash_deny:
         if _command_matches(normalized, pattern):
-            return PermissionCheck(False, f"bash denied by pattern: {pattern}")
+            return PermissionCheck(False, f"bash denied by pattern: {pattern}", False, pattern, "bash", command)
 
     # Ask
     for pattern in wp.bash_ask:
         if _command_matches(normalized, pattern):
-            return PermissionCheck(True, f"bash requires ask for: {pattern}", requires_ask=True)
+            return PermissionCheck(True, f"bash requires ask for: {pattern}", True, pattern, "bash", command)
 
     # Explicit allow
     for pattern in wp.bash_allow:
         if _command_matches(normalized, pattern):
-            return PermissionCheck(True, f"bash allowed by pattern: {pattern}")
+            return PermissionCheck(True, f"bash allowed by pattern: {pattern}", False, pattern, "bash", command)
 
     # Default deny
-    return PermissionCheck(False, f"bash command not in allow list: {command[:80]}")
+    return PermissionCheck(False, f"bash command not in allow list: {command[:80]}", False, "", "bash", command)
+
+
+def check_worker_launch_command(worker_name: str, command: str) -> PermissionCheck:
+    """Guard the actual worker CLI command against static deny rules.
+
+    Worker launch commands are not generic project bash commands, so they do not
+    need to match bash.allow. They must, however, never contain a denied bypass
+    or destructive command pattern.
+    """
+    wp = load_permissions(worker_name)
+    for pattern in wp.bash_deny:
+        if _command_matches(command.strip(), pattern):
+            return PermissionCheck(False, f"worker command denied by pattern: {pattern}", False, pattern, "worker_command", command)
+    return PermissionCheck(True, "worker command passed deny-list check", False, "", "worker_command", command)
 
 
 def check_provider(worker_name: str, provider: str) -> PermissionCheck:
@@ -149,16 +206,16 @@ def check_provider(worker_name: str, provider: str) -> PermissionCheck:
 
     for deny in wp.provider_deny:
         if deny.lower() in provider_lower:
-            return PermissionCheck(False, f"provider denied: {deny}")
+            return PermissionCheck(False, f"provider denied: {deny}", False, deny, "provider", provider)
 
     for allow in wp.provider_allow:
         if allow.lower() in provider_lower:
-            return PermissionCheck(True, f"provider allowed: {allow}")
+            return PermissionCheck(True, f"provider allowed: {allow}", False, allow, "provider", provider)
 
     if not wp.provider_allow:
-        return PermissionCheck(True, "no provider restrictions")
+        return PermissionCheck(True, "no provider restrictions", False, "", "provider", provider)
 
-    return PermissionCheck(False, f"provider not in allow list: {provider}")
+    return PermissionCheck(False, f"provider not in allow list: {provider}", False, "", "provider", provider)
 
 
 def _path_matches(file_path: str, pattern: str) -> bool:

@@ -17,6 +17,7 @@ from .failure_classifier import (
     classify_worker_failure,
 )
 from .metrics import collect_task_metrics, write_metrics
+from .permissions import check_write_paths
 from .pr import create_pr_or_patch
 from .project_registry import detect_project, load_projects
 from .project_commands import (
@@ -511,6 +512,35 @@ class OrchestratorService:
             attempt["started_at"] = _now()
 
             worker = WORKERS.get(attempt["worker"], ClaudeCodeWorker())
+            preflight = self._check_worker_declared_permissions(task_id, attempt["worker"], task)
+            if not preflight["allowed"]:
+                failure = FailureClassification(
+                    "forbidden_path",
+                    False,
+                    "block_and_surface_policy_violation",
+                    [item["reason"] for item in preflight.get("denied", [])],
+                )
+                self._set_status(
+                    task_id,
+                    "BLOCKED",
+                    "permission_denied",
+                    {"phase": "preflight", "permission": preflight, "failure": failure.to_dict()},
+                )
+                self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], incident=True)
+                return
+            if preflight["requires_ask"]:
+                self._set_status(
+                    task_id,
+                    "HARD_APPROVAL_WAITING",
+                    "permission_requires_approval",
+                    {"phase": "preflight", "permission": preflight},
+                )
+                self.artifacts.write_text(
+                    task_id,
+                    "approval_explanation.md",
+                    "Static worker permissions require explicit approval for declared write paths.\n",
+                )
+                return
 
             # ── Idempotent AGENTS.md injection before each OpenCode attempt ──
             # Covers prime=opencode AND ClaudeCodeWorker→OpenCodeWorker escalation.
@@ -531,6 +561,33 @@ class OrchestratorService:
             prompt = _worker_prompt(task, {"selected_model": attempt["model"], "selected_worker": attempt["worker"]})
             task_for_worker = {**task, "task_id": task_id}
             worker_result = worker.run(prompt, Path(wt.path), attempt, task_for_worker, dry_run=dry_run)
+            diff_permissions = self._check_worker_diff_permissions(task_id, attempt["worker"], worker_result.changed_files)
+            if not diff_permissions["allowed"]:
+                failure = FailureClassification(
+                    "forbidden_path",
+                    False,
+                    "block_and_surface_policy_violation",
+                    [item["reason"] for item in diff_permissions.get("denied", [])],
+                )
+                worker_result.status = "blocked"
+                worker_result.risks.extend([item["reason"] for item in diff_permissions.get("denied", [])])
+                self.artifacts.write_json(task_id, "result.json", worker_result.__dict__)
+                self._set_status(
+                    task_id,
+                    "BLOCKED",
+                    "permission_denied",
+                    {"phase": "diff", "permission": diff_permissions, "failure": failure.to_dict()},
+                )
+                self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], incident=True)
+                return
+            if diff_permissions["requires_ask"]:
+                self._set_status(
+                    task_id,
+                    "HARD_APPROVAL_WAITING",
+                    "permission_requires_approval",
+                    {"phase": "diff", "permission": diff_permissions},
+                )
+                return
 
             attempt["finished_at"] = _now()
             attempt["status"] = worker_result.status
@@ -822,6 +879,31 @@ class OrchestratorService:
         self.db.update_task(task_id, status=status, updated_at=_now())
         self.db.append_event(task_id, event_type, old_status, status, payload)
 
+    def _check_worker_declared_permissions(self, task_id: str, worker_name: str, task: dict[str, Any]) -> dict[str, Any]:
+        paths = _declared_write_paths(task)
+        review = check_write_paths(worker_name, paths).to_dict()
+        self.db.append_event(
+            task_id,
+            "permission_preflight",
+            self.db.get_task(task_id)["status"],
+            self.db.get_task(task_id)["status"],
+            {"worker": worker_name, "paths": paths, "permission": review},
+        )
+        return review
+
+    def _check_worker_diff_permissions(self, task_id: str, worker_name: str, changed_files: list[str]) -> dict[str, Any]:
+        review = check_write_paths(worker_name, changed_files or []).to_dict()
+        event_type = "permission_denied" if not review["allowed"] else "permission_diff_checked"
+        task = self.db.get_task(task_id)
+        self.db.append_event(
+            task_id,
+            event_type,
+            task["status"] if task else None,
+            task["status"] if task else None,
+            {"worker": worker_name, "changed_files": changed_files or [], "permission": review},
+        )
+        return review
+
     def _write_attempt_metrics(
         self,
         task_id: str,
@@ -852,6 +934,15 @@ class OrchestratorService:
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _declared_write_paths(task: dict[str, Any]) -> list[str]:
+    paths: list[str] = []
+    for key in ("owned_paths", "target_paths", "planned_files"):
+        value = task.get(key)
+        if isinstance(value, list):
+            paths.extend(str(item) for item in value if item)
+    return list(dict.fromkeys(paths))
 
 
 def _read_json_if_exists(path: Path) -> dict[str, Any] | None:

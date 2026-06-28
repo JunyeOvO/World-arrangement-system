@@ -140,8 +140,10 @@ class ApprovalGraph:
         risk_level = task.get("risk_level", "medium")
         task_type = task.get("task_type", _classify_task_type(user_goal, project))
 
+        planned_files = _planned_files_from_task(task)
+
         # ── 1. Check hard risks ──
-        blocking_issues, hard_warnings = check_hard_risk(user_goal)
+        blocking_issues, hard_warnings = check_hard_risk(user_goal, planned_files=planned_files)
 
         # Non-reversible commands / forbidden path writes → BLOCKED
         if blocking_issues:
@@ -186,6 +188,15 @@ class ApprovalGraph:
                         )
 
         # ── 4. Risk-based fallback ──
+        if touches_hard_approval_paths:
+            return ApprovalDecision(
+                ApprovalMode.HARD_APPROVAL,
+                "production path access requires explicit approval",
+                risk_score=0.85 if risk_level != "high" else 0.9,
+                requires_plan=True,
+                warnings=hard_warnings,
+            )
+
         if risk_level == "low":
             return ApprovalDecision(
                 ApprovalMode.AUTO_WITH_SUMMARY,
@@ -202,14 +213,6 @@ class ApprovalGraph:
                 warnings=hard_warnings,
             )
         else:  # high
-            if touches_hard_approval_paths:
-                return ApprovalDecision(
-                    ApprovalMode.HARD_APPROVAL,
-                    "high risk with production path access, requires explicit approval",
-                    risk_score=0.9,
-                    requires_plan=True,
-                    warnings=hard_warnings,
-                )
             return ApprovalDecision(
                 ApprovalMode.SOFT_APPROVAL,
                 "high risk but no real danger detected; soft approval with output gating",
@@ -277,6 +280,15 @@ def _parse_json(raw: str) -> dict[str, Any]:
         return json.loads(raw) if raw else {}
     except (json.JSONDecodeError, TypeError):
         return {}
+
+
+def _planned_files_from_task(task: dict[str, Any]) -> list[str]:
+    files: list[str] = []
+    for key in ("planned_files", "target_paths", "owned_paths"):
+        value = task.get(key)
+        if isinstance(value, list):
+            files.extend(str(item) for item in value if item)
+    return list(dict.fromkeys(files))
 
 
 def _matches_override(user_goal: str, task_type: str, matcher: dict[str, Any]) -> bool:

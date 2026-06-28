@@ -162,3 +162,29 @@ def test_high_risk_with_prod_path_is_hard_approval():
     # Without planned_files, it falls through to SOFT_APPROVAL with warnings
     # This is correct behavior — path check needs actual planned files
     assert decision.mode in (ApprovalMode.SOFT_APPROVAL, ApprovalMode.HARD_APPROVAL)
+
+
+def test_target_prod_path_requires_hard_approval():
+    graph = ApprovalGraph()
+    decision = graph.decide({
+        "user_goal": "update terraform variable",
+        "risk_level": "medium",
+        "project_id": "generic",
+        "target_paths": ["infra/prod/main.tf"],
+    })
+
+    assert decision.mode == ApprovalMode.HARD_APPROVAL
+    assert any("hard-approval" in warning for warning in decision.warnings)
+
+
+def test_target_env_path_is_blocked():
+    graph = ApprovalGraph()
+    decision = graph.decide({
+        "user_goal": "update env file",
+        "risk_level": "medium",
+        "project_id": "generic",
+        "target_paths": [".env"],
+    })
+
+    assert decision.mode == ApprovalMode.BLOCKED
+    assert any(".env" in issue for issue in decision.blocking_issues)

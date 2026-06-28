@@ -253,3 +253,59 @@ def test_scheduler_writes_verify_and_metrics_artifacts(tmp_path, monkeypatch):
     assert verify_payload["forbidden_allowed"] is True
     assert metrics_payload["task_id"] == result["task_id"]
     assert db_metrics[0]["model"] == "deepseek_pro"
+
+
+def test_scheduler_permission_diff_check_writes_audit_event(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_ORCHESTRATOR_HOME", str(tmp_path / "runtime"))
+    service = OrchestratorService()
+    service.db.create_task({
+        "task_id": "t_perm",
+        "project_id": "p",
+        "repo_path": str(tmp_path),
+        "user_goal": "test",
+        "status": "EXECUTING",
+        "created_at": "now",
+        "updated_at": "now",
+        "route_worker": "claude_code",
+        "route_model": "deepseek_pro",
+        "route_variant": "",
+        "pr_url": None,
+        "run_dir": str(tmp_path / "run"),
+    })
+
+    review = service._check_worker_diff_permissions("t_perm", "claude_code", [".env"])
+    events = service.db.list_events("t_perm")
+
+    assert review["allowed"] is False
+    assert events[-1]["event_type"] == "permission_denied"
+    payload = json.loads(events[-1]["payload_json"])
+    assert payload["permission"]["denied"][0]["target"] == ".env"
+
+
+def test_scheduler_permission_preflight_requires_approval_for_prod(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_ORCHESTRATOR_HOME", str(tmp_path / "runtime"))
+    service = OrchestratorService()
+    service.db.create_task({
+        "task_id": "t_prod",
+        "project_id": "p",
+        "repo_path": str(tmp_path),
+        "user_goal": "test",
+        "status": "EXECUTING",
+        "created_at": "now",
+        "updated_at": "now",
+        "route_worker": "opencode",
+        "route_model": "opencode-go/glm-5.2",
+        "route_variant": "high",
+        "pr_url": None,
+        "run_dir": str(tmp_path / "run"),
+    })
+
+    review = service._check_worker_declared_permissions(
+        "t_prod",
+        "opencode",
+        {"target_paths": ["infra/prod/main.tf"]},
+    )
+
+    assert review["allowed"] is True
+    assert review["requires_ask"] is True
+    assert service.db.list_events("t_prod")[-1]["event_type"] == "permission_preflight"

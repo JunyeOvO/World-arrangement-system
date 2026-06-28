@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 from pathlib import Path
 
 from .base import Worker, WorkerResult
@@ -10,6 +11,7 @@ from ..command_utils import build_command, command_available, subprocess_cwd, su
 from ..constants import DEFAULT_CLAUDE_CMD
 from ..env_profiles import env_for_model, redacted_env_keys
 from ..llm_capability import capability_profile, env_for_capability
+from ..permissions import check_provider, check_worker_launch_command
 from ..process_control import run_managed_process
 
 
@@ -159,6 +161,18 @@ class ClaudeCodeWorker(Worker):
                 [f"forbidden_model={selected_model}", "action=route_to_opencode_worker"],
                 True, "", "",
             )
+        provider_check = check_provider(self.name, selected_model)
+        if not provider_check.allowed:
+            return WorkerResult(
+                "blocked",
+                f"Claude Code worker provider denied: {selected_model}",
+                [],
+                task.get("test_commands", []),
+                [provider_check.reason],
+                True,
+                "",
+                "",
+            )
 
         claude_cmd = os.environ.get("AI_CLAUDE_CMD", DEFAULT_CLAUDE_CMD)
         profile_env, profile_path = env_for_model(selected_model)
@@ -219,6 +233,18 @@ class ClaudeCodeWorker(Worker):
             profile_env,
             cwd=worktree,
         )
+        command_check = check_worker_launch_command(self.name, shlex.join(str(part) for part in cmd))
+        if not command_check.allowed:
+            return WorkerResult(
+                "blocked",
+                "Claude Code worker command denied by static permissions",
+                [],
+                task.get("test_commands", []),
+                [command_check.reason],
+                True,
+                str(stdout_path),
+                str(stderr_path),
+            )
         child_env = _build_minimal_worker_env(profile_env)
         timeout_sec = int(route.get("timeout_sec", 2700))
         proc = run_managed_process(

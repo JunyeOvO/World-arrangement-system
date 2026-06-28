@@ -1,9 +1,16 @@
 """Phase 6 tests: Static Worker Permission Profiles."""
 import pytest
+import json
+from pathlib import Path
+import yaml
+from jsonschema import Draft202012Validator
+
 from orchestrator.permissions import (
     load_permissions,
     check_write_path,
+    check_write_paths,
     check_bash_command,
+    check_worker_launch_command,
     check_provider,
     WorkerPermissions,
 )
@@ -72,10 +79,10 @@ def test_write_pem_is_denied():
         assert not result.allowed, f"{name} should deny *.pem"
 
 
-def test_write_prod_infra_is_denied():
+def test_write_prod_infra_requires_ask():
     for name in ["claude_code", "opencode"]:
         result = check_write_path(name, "infra/prod/terraform/main.tf")
-        assert not result.allowed, f"{name} should deny infra/prod/**"
+        assert result.allowed and result.requires_ask, f"{name} should ask for infra/prod/**"
 
 
 def test_write_package_json_requires_ask():
@@ -174,3 +181,26 @@ def test_opencode_worker_does_not_allow_dangerous_bypass():
     """OpenCodeWorker must not use --dangerously-skip-permissions."""
     result = check_bash_command("opencode", "claude --dangerously-skip-permissions run")
     assert not result.allowed
+
+
+def test_worker_permissions_config_matches_schema():
+    schema = json.loads(Path("schemas/worker_permissions.schema.json").read_text(encoding="utf-8"))
+    config = yaml.safe_load(Path("config/worker_permissions.yaml").read_text(encoding="utf-8"))
+    Draft202012Validator(schema).validate(config)
+
+
+def test_bulk_write_review_reports_denied_and_ask():
+    review = check_write_paths("claude_code", ["src/app.py", "infra/prod/main.tf", ".env"])
+
+    assert review.allowed is False
+    assert review.requires_ask is True
+    assert any(check.target == ".env" and not check.allowed for check in review.checks)
+    assert any(check.target == "infra/prod/main.tf" and check.requires_ask for check in review.checks)
+
+
+def test_worker_launch_command_checks_deny_list_only():
+    allowed = check_worker_launch_command("opencode", "opencode run -m opencode-go/glm-5.2")
+    denied = check_worker_launch_command("opencode", "opencode run --dangerously-skip-permissions")
+
+    assert allowed.allowed
+    assert not denied.allowed

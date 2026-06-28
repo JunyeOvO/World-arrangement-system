@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WorkerPermissions",
+  "type": "object",
+  "required": ["version", "workers"],
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "workers": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": ["profile", "permissions"],
+        "properties": {
+          "profile": { "type": "string" },
+          "description": { "type": "string" },
+          "provider_allow": { "$ref": "#/$defs/stringList" },
+          "provider_deny": { "$ref": "#/$defs/stringList" },
+          "model_default": { "type": "string" },
+          "variant_default": { "type": "string" },
+          "effort_default": { "type": "string" },
+          "timeout_sec": { "type": "integer", "minimum": 1 },
+          "permissions": {
+            "type": "object",
+            "required": ["read", "write", "bash"],
+            "properties": {
+              "read": { "$ref": "#/$defs/accessRules" },
+              "write": { "$ref": "#/$defs/accessRules" },
+              "bash": { "$ref": "#/$defs/accessRules" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "$defs": {
+    "stringList": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "accessRules": {
+      "type": "object",
+      "properties": {
+        "allow": { "$ref": "#/$defs/stringList" },
+        "ask": { "$ref": "#/$defs/stringList" },
+        "deny": { "$ref": "#/$defs/stringList" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}
