@@ -752,6 +752,23 @@ class OrchestratorService:
              "changed_files": verify_result.changed_files},
             Path(task["run_dir"]) / "review" / "review.json",
         )
+        if _review_degraded_blocks_publish(task, review):
+            failure = classify_review_failure({**review, "available": False})
+            if last_attempt:
+                self._write_attempt_metrics(
+                    task_id,
+                    int(last_attempt.get("attempt_no", 1)),
+                    last_attempt,
+                    final_result,
+                    failure,
+                    build_passed=verify_result.build_passed,
+                    review_approved=False,
+                )
+            self.artifacts.write_text(task_id, "final.md", _final_md(task, route, final_result.__dict__, verify_result.to_dict(), review))
+            self._set_status(task_id, "NEEDS_USER", "review_degraded_needs_user",
+                             {"failure_reason": failure.failure_reason, "failure": failure.to_dict(), "review": review})
+            self._record_policy_learning(task, project, success=False, worker=route["selected_worker"], model=route["selected_model"])
+            return
         if not review.get("approved"):
             failure = classify_review_failure(review)
             if last_attempt:
@@ -943,6 +960,12 @@ def _declared_write_paths(task: dict[str, Any]) -> list[str]:
         if isinstance(value, list):
             paths.extend(str(item) for item in value if item)
     return list(dict.fromkeys(paths))
+
+
+def _review_degraded_blocks_publish(task: dict[str, Any], review: dict[str, Any]) -> bool:
+    if not review.get("degraded"):
+        return False
+    return str(task.get("risk_level", "medium")).lower() in {"medium", "high", "max"}
 
 
 def _read_json_if_exists(path: Path) -> dict[str, Any] | None:
@@ -1225,6 +1248,9 @@ def _final_md(task: dict[str, Any], route: dict[str, Any], worker: dict[str, Any
 
 ## Review
 
+- Mode: {review.get('review_mode', 'unknown')}
+- Degraded: {review.get('degraded', False)}
+- Degradation reason: {review.get('degradation_reason')}
 - Approved: {review.get('approved')}
 - Can create PR: {review.get('can_create_pr')}
 
