@@ -26,6 +26,14 @@ TERMINAL_FAILED = {"FAILED", "FAILED_FINAL"}
 RUNNING = {"EXECUTING", "RUNNING", "VERIFYING", "CODEX_REVIEWING", "REVIEWING"}
 APPROVAL_WAITING = {"HARD_APPROVAL_WAITING", "SOFT_APPROVAL_WAITING", "NEEDS_USER", "BLOCKED"}
 HEARTBEAT_FRESH_SECONDS = 120
+PROCESS_TERMINAL_DISPLAY = {
+    "succeeded": "WORKER_SUCCEEDED",
+    "failed": "WORKER_FAILED",
+    "timed_out": "WORKER_TIMED_OUT",
+    "cancelled": "WORKER_CANCELLED",
+}
+PROCESS_FAILED_DISPLAY = {"WORKER_FAILED", "WORKER_TIMED_OUT"}
+PROCESS_RUNNING = {"running"}
 
 
 class ConsoleQueries:
@@ -42,7 +50,7 @@ class ConsoleQueries:
         _auto_dismiss_superseded_stale_running_tasks(self.db, raw_tasks, live_task_ids)
         dismissed = self.db.list_console_dismissed_task_ids()
         tasks = [
-            _with_runtime_liveness(task_summary(row), live_task_ids)
+            _with_runtime_liveness(task_summary(row), live_task_ids, row)
             for row in raw_tasks
             if row.get("task_id") not in dismissed
         ]
@@ -94,7 +102,7 @@ class ConsoleQueries:
         verify = self._read_artifact_json(artifact_index, "verify/verify.json")
         review = self._read_artifact_json(artifact_index, "review/review.json")
         return {
-            "task": _with_runtime_liveness(task_summary(task), live_task_ids),
+            "task": _with_runtime_liveness(task_summary(task), live_task_ids, task),
             "timeline": events,
             "route_decision": route,
             "approval": approval,
@@ -227,22 +235,45 @@ def _status_counts(tasks: list[dict[str, Any]]) -> dict[str, int]:
             counts["running"] += 1
         if status in {"QUEUED", "NEW", "PLANNED", "ROUTED"}:
             counts["queued"] += 1
-        if status in TERMINAL_FAILED:
+        if status in TERMINAL_FAILED or task.get("display_status") in PROCESS_FAILED_DISPLAY:
             counts["failed"] += 1
         if status in APPROVAL_WAITING:
             counts["approval_waiting"] += 1
     return counts
 
 
-def _with_runtime_liveness(task: dict[str, Any], live_task_ids: set[str]) -> dict[str, Any]:
+def _with_runtime_liveness(
+    task: dict[str, Any],
+    live_task_ids: set[str],
+    raw_task: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     status = str(task.get("status") or "")
     task_id = str(task.get("task_id") or "")
-    live = status in RUNNING and task_id in live_task_ids
-    task["runtime"] = {
+    raw = raw_task or task
+    process = _read_control_json(raw.get("run_dir"), "process.json")
+    control_heartbeat = _read_control_json(raw.get("run_dir"), "heartbeat.json")
+    control_live = _control_heartbeat_live(control_heartbeat)
+    live = status in RUNNING and (task_id in live_task_ids or control_live)
+    runtime: dict[str, Any] = {
         "live": live,
         "stale": status in RUNNING and not live,
     }
-    if status in RUNNING and not live:
+    process_status = str(process.get("status") or "")
+    process_finished = bool(process_status in PROCESS_TERMINAL_DISPLAY or process.get("finished_at"))
+    if process_status:
+        runtime["process_status"] = process_status
+        runtime["process_finished"] = process_finished
+    control_heartbeat_status = str(control_heartbeat.get("status") or "")
+    if control_heartbeat_status:
+        runtime["control_heartbeat_status"] = control_heartbeat_status
+        runtime["control_heartbeat_live"] = control_live
+    task["runtime"] = runtime
+    if status in RUNNING and not live and process_status in PROCESS_TERMINAL_DISPLAY:
+        task["display_status"] = PROCESS_TERMINAL_DISPLAY[process_status]
+        task["status_note"] = (
+            f"Worker process is {process_status}; raw task status remains {status}."
+        )
+    elif status in RUNNING and not live:
         task["display_status"] = "STALE_EXECUTING"
         task["status_note"] = "No fresh worker heartbeat; raw task status is stale."
     else:
@@ -277,6 +308,25 @@ def _parse_ts(value: Any) -> float | None:
         return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
     except ValueError:
         return None
+
+
+def _read_control_json(run_dir: Any, name: str) -> dict[str, Any]:
+    if not run_dir:
+        return {}
+    path = Path(str(run_dir)) / "control" / name
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _control_heartbeat_live(heartbeat: dict[str, Any]) -> bool:
+    status = str(heartbeat.get("status") or "")
+    if status.lower() not in PROCESS_RUNNING and status.upper() not in RUNNING:
+        return False
+    ts = _parse_ts(heartbeat.get("last_seen") or heartbeat.get("ts"))
+    return ts is not None and time.time() - ts <= HEARTBEAT_FRESH_SECONDS
 
 
 def _metric_date(created_at: str) -> str:

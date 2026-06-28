@@ -179,7 +179,9 @@ small {
 }
 
 .status.done,
-.status.completed {
+.status.completed,
+.status.completed_with_patch,
+.status.worker_succeeded {
   color: #166534;
   background: #eaf7ee;
 }
@@ -187,6 +189,17 @@ small {
 .status.stale_executing {
   color: #8a4b0f;
   background: #fff4df;
+}
+
+.status.worker_failed,
+.status.worker_timed_out {
+  color: #9f1d2f;
+  background: #fff2f3;
+}
+
+.status.worker_cancelled {
+  color: #4c5868;
+  background: #eef2f6;
 }
 
 .alerts {

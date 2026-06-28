@@ -60,6 +60,34 @@ def _create_task(
     return task_id
 
 
+def _write_process_state(service: StubService, task_id: str, status: str) -> None:
+    process_path = service.artifacts.run_dir(task_id) / "control" / "process.json"
+    process_path.parent.mkdir(parents=True, exist_ok=True)
+    process_path.write_text(
+        json.dumps({
+            "task_id": task_id,
+            "pid": 1234,
+            "status": status,
+            "finished_at": "2026-06-28T00:00:02Z",
+        }),
+        encoding="utf-8",
+    )
+
+
+def _write_control_heartbeat(service: StubService, task_id: str, status: str) -> None:
+    heartbeat_path = service.artifacts.run_dir(task_id) / "control" / "heartbeat.json"
+    heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+    heartbeat_path.write_text(
+        json.dumps({
+            "task_id": task_id,
+            "pid": 1234,
+            "status": status,
+            "last_seen": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }),
+        encoding="utf-8",
+    )
+
+
 def test_console_snapshot_matches_schema_and_redacts(tmp_path: Path):
     service = StubService(tmp_path)
     _create_task(service)
@@ -135,6 +163,59 @@ def test_console_snapshot_counts_executing_with_fresh_heartbeat(tmp_path: Path):
     assert task["status_note"] == ""
 
 
+def test_console_snapshot_counts_executing_with_fresh_control_heartbeat(tmp_path: Path):
+    service = StubService(tmp_path)
+    task_id = _create_task(service, status="EXECUTING")
+    _write_control_heartbeat(service, task_id, "running")
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    status, _, payload = api.handle_get("/api/console/snapshot")
+
+    assert status == 200
+    assert payload["health"]["running"] == 1
+    task = next(item for item in payload["tasks"] if item["task_id"] == task_id)
+    assert task["runtime"]["live"] is True
+    assert task["runtime"]["control_heartbeat_status"] == "running"
+    assert task["runtime"]["control_heartbeat_live"] is True
+    assert task["display_status"] == "EXECUTING"
+
+
+def test_console_snapshot_uses_finished_worker_state_when_db_still_executing(tmp_path: Path):
+    service = StubService(tmp_path)
+    task_id = _create_task(service, status="EXECUTING")
+    _write_process_state(service, task_id, "succeeded")
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    status, _, payload = api.handle_get("/api/console/snapshot")
+
+    assert status == 200
+    assert payload["health"]["running"] == 0
+    task = next(item for item in payload["tasks"] if item["task_id"] == task_id)
+    assert task["runtime"] == {
+        "live": False,
+        "stale": True,
+        "process_status": "succeeded",
+        "process_finished": True,
+    }
+    assert task["display_status"] == "WORKER_SUCCEEDED"
+    assert "raw task status remains EXECUTING" in task["status_note"]
+
+
+def test_console_snapshot_counts_failed_worker_state_when_db_still_executing(tmp_path: Path):
+    service = StubService(tmp_path)
+    task_id = _create_task(service, status="EXECUTING")
+    _write_process_state(service, task_id, "failed")
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    status, _, payload = api.handle_get("/api/console/snapshot")
+
+    assert status == 200
+    assert payload["health"]["running"] == 0
+    assert payload["health"]["failed"] == 1
+    task = next(item for item in payload["tasks"] if item["task_id"] == task_id)
+    assert task["display_status"] == "WORKER_FAILED"
+
+
 def test_task_detail_includes_lifecycle_and_artifacts(tmp_path: Path):
     service = StubService(tmp_path)
     task_id = _create_task(service)
@@ -160,6 +241,19 @@ def test_task_detail_marks_stale_executing_without_heartbeat(tmp_path: Path):
     assert payload["task"]["runtime"] == {"live": False, "stale": True}
     assert payload["task"]["display_status"] == "STALE_EXECUTING"
     assert "No fresh worker heartbeat" in payload["task"]["status_note"]
+
+
+def test_task_detail_uses_finished_worker_state_when_db_still_executing(tmp_path: Path):
+    service = StubService(tmp_path)
+    task_id = _create_task(service, status="EXECUTING")
+    _write_process_state(service, task_id, "timed_out")
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    status, _, payload = api.handle_get(f"/api/tasks/{task_id}")
+
+    assert status == 200
+    assert payload["task"]["runtime"]["process_status"] == "timed_out"
+    assert payload["task"]["display_status"] == "WORKER_TIMED_OUT"
 
 
 def test_artifact_whitelist_blocks_env_and_path_escape(tmp_path: Path):
