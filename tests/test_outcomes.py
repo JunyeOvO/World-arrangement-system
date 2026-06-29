@@ -40,6 +40,24 @@ def test_degraded_mock_requires_rework():
     assert row["codex_rework_required"] is True
 
 
+def test_partial_artifacts_count_as_successful_read_only_outcome():
+    row = derive_task_outcome(
+        {
+            "task_id": "task_partial",
+            "project_id": "travel_with_me",
+            "status": "COMPLETED_WITH_PARTIAL_ARTIFACTS",
+            "route_worker": "claude_code",
+            "route_model": "deepseek_pro",
+            "user_goal": "只读分析项目质量",
+        },
+        review={"approved": True, "review_mode": "skipped_read_only"},
+        result={"partial_result": True, "changed_files": []},
+    )
+
+    assert row["outcome"] == "success"
+    assert row["user_acceptance"] == "accepted"
+
+
 def test_summarize_outcomes_rates():
     summary = summarize_outcomes([
         {"outcome": "success", "tests_passed": True, "review_approved": True, "user_acceptance": "accepted"},

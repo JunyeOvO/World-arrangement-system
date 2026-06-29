@@ -29,6 +29,7 @@ def test_old_state_aliases_resolve():
     assert resolve_state("COMPLETED") == "DONE"
     assert resolve_state("COMPLETED_NO_CHANGES") == "DONE"
     assert resolve_state("COMPLETED_WITH_ARTIFACTS") == "DONE"
+    assert resolve_state("COMPLETED_WITH_PARTIAL_ARTIFACTS") == "DONE"
     assert resolve_state("DRY_RUN_COMPLETED") == "DONE"
 
 
@@ -73,7 +74,7 @@ def test_blocked_state():
 
 def test_terminal_states():
     """Terminal states should have no outgoing transitions."""
-    for state in ["DONE", "DONE_WITH_BLOCK", "COMPLETED_NO_CHANGES", "DRY_RUN_COMPLETED", "FAILED_FINAL", "CANCELLED", "ROLLED_BACK"]:
+    for state in ["DONE", "DONE_WITH_BLOCK", "COMPLETED_NO_CHANGES", "COMPLETED_WITH_PARTIAL_ARTIFACTS", "DRY_RUN_COMPLETED", "FAILED_FINAL", "CANCELLED", "ROLLED_BACK"]:
         assert can_transition(state, "NEW") is False
         assert can_transition(state, "DONE") is False
 

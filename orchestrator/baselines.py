@@ -9,6 +9,23 @@ from .codex_usage import TOKEN_ESTIMATION_METHOD, estimate_payload_tokens
 
 
 BASELINE_KIND_CODEX_ONLY_REPLAY = "codex_only_replay"
+REPLAY_BASELINE_ARTIFACT_ALLOWLIST = {
+    "task.json",
+    "route.json",
+    "result.json",
+    "verify/verify.json",
+    "review/review.json",
+    "final.md",
+    "metrics.json",
+    "token_ledger.json",
+    "outcome.json",
+}
+REPLAY_BASELINE_RUNTIME_PREFIXES = (
+    "worktrees/",
+    "worker/",
+    "control/",
+    "attempts/",
+)
 
 
 def build_replay_baseline(
@@ -56,7 +73,9 @@ def build_replay_baseline(
         "estimation_method": TOKEN_ESTIMATION_METHOD,
         "created_at": _now(),
         "metadata": {
-            "artifact_paths": sorted(artifact_index.keys()),
+            "artifact_paths": _baseline_artifact_paths(artifact_index),
+            "artifact_count": len(artifact_index),
+            "excluded_runtime_artifact_count": _excluded_runtime_artifact_count(artifact_index),
             "warning": (
                 "Replay baseline estimates same-task Codex-only context from stored artifacts. "
                 "It is useful for trend analysis but is not measured Codex quota usage."
@@ -100,6 +119,18 @@ def _read_json_artifact(index: dict[str, str], relative: str) -> Any:
     except (OSError, json.JSONDecodeError):
         return None
     return value
+
+
+def _baseline_artifact_paths(index: dict[str, str]) -> list[str]:
+    return sorted(
+        key
+        for key in index
+        if key in REPLAY_BASELINE_ARTIFACT_ALLOWLIST and not key.startswith(REPLAY_BASELINE_RUNTIME_PREFIXES)
+    )
+
+
+def _excluded_runtime_artifact_count(index: dict[str, str]) -> int:
+    return sum(1 for key in index if key.startswith(REPLAY_BASELINE_RUNTIME_PREFIXES))
 
 
 def _read_text_artifact(index: dict[str, str], relative: str, limit: int) -> str:

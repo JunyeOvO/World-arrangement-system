@@ -53,6 +53,14 @@ def test_done_is_hidden():
     assert status.console_group == "none"
 
 
+def test_partial_artifacts_done_is_hidden():
+    status = derive_dashboard_status({"status": "COMPLETED_WITH_PARTIAL_ARTIFACTS"})
+
+    assert status.big_status == "Done"
+    assert status.console_group == "none"
+    assert status.is_terminal is True
+
+
 def test_cancelled_is_closed_hidden():
     status = derive_dashboard_status({"status": "CANCELLED"})
 

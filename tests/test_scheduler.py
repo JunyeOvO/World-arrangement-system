@@ -258,6 +258,35 @@ def test_read_only_max_turns_with_partial_text_can_be_salvaged(tmp_path):
     assert summary is not None
     assert summary.startswith("Partial read-only result salvaged")
     assert "three next candidates" in summary
+    assert result.partial_result is True
+
+
+def test_read_only_max_turns_with_stream_delta_can_be_salvaged(tmp_path):
+    stream = tmp_path / "worker.jsonl"
+    stream.write_text(
+        "\n".join([
+            json.dumps({"type": "content_block_delta", "delta": {"text": "## Summary\n\n"}}),
+            json.dumps({"type": "content_block_delta", "delta": {"text": "This partial read-only result includes risks, recommendations, and next steps. "}}),
+            json.dumps({"type": "content_block_delta", "delta": {"text": "No files were changed and changed_files=[] remains empty."}}),
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    result = WorkerResult(
+        status="failed",
+        summary="Claude Code worker failed",
+        changed_files=[],
+        stdout_path=str(stream),
+    )
+
+    summary = _read_only_failure_summary(
+        {"user_goal": "只读分析项目质量，不修改文件。", "task_mode": "read_only", "expected_diff": False},
+        result,
+        FailureClassification("max_turns_no_diff", True, "escalate_model_or_narrow_task"),
+    )
+
+    assert summary is not None
+    assert "partial read-only result" in summary
+    assert result.partial_result is True
 
 
 def test_verifiable_path_wording_does_not_force_project_verification():

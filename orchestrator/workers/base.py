@@ -21,6 +21,7 @@ class WorkerResult:
     degraded: bool = False
     degradation_reason: str | None = None
     mock_result: bool = False
+    partial_result: bool = False
 
 
 class Worker:

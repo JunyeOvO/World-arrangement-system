@@ -54,6 +54,27 @@ def test_replay_baseline_uses_task_artifacts(tmp_path):
     assert baseline["actual_codex_used"] is False
 
 
+def test_replay_baseline_metadata_filters_runtime_artifacts(tmp_path):
+    final_md = tmp_path / "final.md"
+    final_md.write_text("# Result\n\nRead-only output.\n", encoding="utf-8")
+    worker_stream = tmp_path / "worker.stream.jsonl"
+    worker_stream.write_text("large stream\n", encoding="utf-8")
+
+    baseline = build_replay_baseline(
+        task={"task_id": "task_1", "project_id": "project_1", "user_goal": "inspect"},
+        artifact_index={
+            "final.md": str(final_md),
+            "worktrees/task_1/app.ts": str(tmp_path / "app.ts"),
+            "worker/worker.stream.jsonl": str(worker_stream),
+            "control/process.json": str(tmp_path / "process.json"),
+        },
+    )
+
+    assert baseline["metadata"]["artifact_paths"] == ["final.md"]
+    assert baseline["metadata"]["artifact_count"] == 4
+    assert baseline["metadata"]["excluded_runtime_artifact_count"] == 3
+
+
 def test_db_records_task_baseline_and_token_ledger_uses_actual_first(tmp_path):
     db = TaskDB(tmp_path / "world.db")
     _create_task(db, tmp_path)

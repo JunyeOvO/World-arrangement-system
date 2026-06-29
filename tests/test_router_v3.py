@@ -191,3 +191,34 @@ def test_history_does_not_override_hard_bugfix_opencode_rule():
     assert route.task_shape == "large_refactor"
     assert route.selected_worker == "opencode"
     assert route.selected_model == "opencode-go/glm-5.2"
+
+
+def test_read_only_protocol_overrides_patch_keywords_and_fallbacks():
+    route = plan_route(
+        {
+            "user_goal": "调查 Travel_with_me 配置问题并给出修复建议，不修改文件。",
+            "risk_level": "medium",
+            "task_mode": "read_only",
+            "expected_diff": False,
+            "task_shape": "targeted_patch",
+        },
+        {},
+    )
+
+    data = route.to_dict()
+
+    assert data["task_shape"] == "review_only"
+    assert data["selected_worker"] == "claude_code"
+    assert data["selected_model"] == "deepseek_pro"
+    assert len(data["retry_chain"]) == 1
+    assert data["fallback_models"] == []
+
+
+def test_expected_no_diff_read_only_goal_does_not_become_config_repair():
+    task = {
+        "user_goal": "只读检查 projects.yaml 配置是否健康，输出风险和下一步。",
+        "risk_level": "low",
+        "expected_diff": False,
+    }
+
+    assert classify_task_shape(task) == "review_only"

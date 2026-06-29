@@ -19,6 +19,11 @@ TASK_SHAPES = {
     "review_only",
 }
 
+READ_ONLY_TASK_SHAPES = {
+    "review_only",
+    "multimodal_analysis",
+}
+
 _MODEL_COST_ESTIMATES = {
     "deepseek_flash": 0.08,
     "deepseek_pro": 0.30,
@@ -33,7 +38,10 @@ _MIN_HISTORY_ATTEMPTS = 3
 
 def classify_task_shape(task: dict[str, Any], features: Any | None = None, labels: Any | None = None) -> str:
     explicit = str(task.get("task_shape") or "").strip()
+    read_only = _is_read_only_task(task)
     if explicit in TASK_SHAPES:
+        if read_only and explicit not in READ_ONLY_TASK_SHAPES:
+            return "review_only"
         return explicit
 
     goal = str(task.get("user_goal", ""))
@@ -43,6 +51,8 @@ def classify_task_shape(task: dict[str, Any], features: Any | None = None, label
     requires_multimodal = bool(getattr(features, "requires_multimodal", False))
     needs_code_change = bool(getattr(labels, "needs_code_change", False))
 
+    if read_only:
+        return "multimodal_analysis" if requires_multimodal else "review_only"
     if requires_multimodal and needs_code_change:
         return "multimodal_to_code"
     if requires_multimodal:
@@ -398,6 +408,16 @@ def _is_config_repair(lower: str, target_paths: list[str]) -> bool:
 
 def _is_review_only(lower: str) -> bool:
     return _has_phrase(lower, ["review only", "audit only", "analyze only", "只分析", "只审查", "不要修改"])
+
+
+def _is_read_only_task(task: dict[str, Any]) -> bool:
+    mode = str(task.get("task_mode") or "").strip().lower()
+    if mode in {"read_only", "readonly", "audit", "analysis"}:
+        return True
+    if task.get("expected_diff") is False:
+        return True
+    verification_policy = str(task.get("verification_policy") or "").strip().lower()
+    return verification_policy == "none" and mode == "read_only"
 
 
 def _single_file_target(task: dict[str, Any]) -> bool:
