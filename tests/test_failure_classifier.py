@@ -41,8 +41,17 @@ def test_classifies_auth_and_command_errors():
 def test_classifies_verify_and_review_failures():
     build = classify_verify_failure(tests_passed=True, build_passed=False, forbidden_allowed=True)
     forbidden = classify_verify_failure(tests_passed=True, build_passed=True, forbidden_allowed=False)
+    dangerous_command = classify_verify_failure(
+        tests_passed=False,
+        build_passed=True,
+        forbidden_allowed=True,
+        command_permissions_allowed=False,
+        evidence=["bash denied by pattern: git push*"],
+    )
     review = classify_review_failure({"approved": False, "available": False, "error": "timeout"})
 
     assert build.failure_reason == "build_failed"
     assert forbidden.failure_reason == "forbidden_path"
+    assert dangerous_command.failure_reason == "dangerous_command"
+    assert dangerous_command.retryable is False
     assert review.failure_reason == "review_unavailable"

@@ -153,6 +153,18 @@ def test_npm_test_allowed():
         assert result.allowed, f"{name} should allow npm test"
 
 
+def test_windows_npm_cmd_test_allowed():
+    for name in ["claude_code", "opencode"]:
+        result = check_bash_command(name, "npm.cmd test")
+        assert result.allowed, f"{name} should allow npm.cmd test"
+
+
+def test_uv_pytest_allowed():
+    for name in ["claude_code", "opencode"]:
+        result = check_bash_command(name, "uv run pytest tests/test_verifier.py")
+        assert result.allowed, f"{name} should allow uv run pytest"
+
+
 def test_npm_install_requires_ask():
     for name in ["claude_code", "opencode"]:
         result = check_bash_command(name, "npm install react")

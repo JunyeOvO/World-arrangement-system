@@ -2,7 +2,7 @@ import json
 import subprocess
 import sys
 
-from orchestrator.verifier import verify, write_verify_result
+from orchestrator.verifier import run_commands, verify, write_verify_result
 
 
 def _git_repo(path):
@@ -43,3 +43,48 @@ def test_verify_marks_build_failure(tmp_path):
     assert result.tests_passed is True
     assert result.build_passed is False
     assert result.command_results[0].returncode == 2
+
+
+def test_run_commands_blocks_denied_command_before_subprocess(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("denied verifier command must not execute")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    results = run_commands(
+        repo,
+        ["git push origin main"],
+        tmp_path / "verify" / "test.log",
+        kind="test",
+        permission_worker="claude_code",
+    )
+
+    assert calls == []
+    assert results[0].returncode == 126
+    assert results[0].permission_allowed is False
+    assert "git push" in results[0].permission_reason
+
+
+def test_verify_marks_permission_block_as_forbidden_not_executed(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git_repo(repo)
+
+    result = verify(
+        repo,
+        ["git push origin main"],
+        [],
+        tmp_path / "verify",
+        permission_worker="opencode",
+    )
+
+    assert result.tests_passed is False
+    assert result.forbidden_allowed is True
+    assert result.command_permissions_allowed is False
+    assert result.command_results[0].returncode == 126
+    assert result.command_results[0].permission_allowed is False

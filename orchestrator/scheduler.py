@@ -1005,18 +1005,32 @@ class OrchestratorService:
             Path(wt.path), test_commands,
             build_commands,
             Path(task["run_dir"]) / "verify",
+            permission_worker=last_attempt["worker"] if last_attempt else None,
         ) if not dry_run else _dry_verify(task)
         forbidden = check_changed_files(verify_result.changed_files, task.get("forbidden_paths"))
         verify_result.forbidden_allowed = forbidden.allowed
         write_verify_result(verify_result, Path(task["run_dir"]) / "verify" / "verify.json")
         self.artifacts.write_json(task_id, "verify/changed_files.json", verify_result.changed_files)
 
-        if not verify_result.tests_passed or not verify_result.build_passed or not forbidden.allowed:
+        if (
+            not verify_result.tests_passed
+            or not verify_result.build_passed
+            or not forbidden.allowed
+            or not verify_result.command_permissions_allowed
+        ):
             failure = classify_verify_failure(
                 tests_passed=verify_result.tests_passed,
                 build_passed=verify_result.build_passed,
                 forbidden_allowed=forbidden.allowed,
-                evidence=forbidden.blocking_issues,
+                command_permissions_allowed=verify_result.command_permissions_allowed,
+                evidence=[
+                    *forbidden.blocking_issues,
+                    *[
+                        result.permission_reason
+                        for result in verify_result.command_results
+                        if not result.permission_allowed or result.permission_requires_ask
+                    ],
+                ],
             )
             if last_attempt:
                 self._write_attempt_metrics(
@@ -2321,7 +2335,16 @@ def _dry_verify(task: dict[str, Any]):
     diff_path = str(Path(task["run_dir"]) / "verify" / "diff.patch")
     Path(diff_path).parent.mkdir(parents=True, exist_ok=True)
     Path(diff_path).write_text("", encoding="utf-8")
-    return VerifyResult(True, True, [], [], diff_path, True, _now())
+    return VerifyResult(
+        tests_passed=True,
+        build_passed=True,
+        command_results=[],
+        changed_files=[],
+        diff_path=diff_path,
+        forbidden_allowed=True,
+        command_permissions_allowed=True,
+        finished_at=_now(),
+    )
 
 
 def _final_md(task: dict[str, Any], route: dict[str, Any], worker: dict[str, Any], verify_result: dict[str, Any], review: dict[str, Any]) -> str:

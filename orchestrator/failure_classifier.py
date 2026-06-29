@@ -63,9 +63,12 @@ def classify_verify_failure(
     tests_passed: bool,
     build_passed: bool,
     forbidden_allowed: bool,
+    command_permissions_allowed: bool = True,
     evidence: list[str] | None = None,
 ) -> FailureClassification:
     evidence = evidence or []
+    if not command_permissions_allowed:
+        return FailureClassification("dangerous_command", False, "block_and_surface_policy_violation", evidence)
     if not forbidden_allowed:
         return FailureClassification("forbidden_path", False, "block_and_surface_policy_violation", evidence)
     if not build_passed:
