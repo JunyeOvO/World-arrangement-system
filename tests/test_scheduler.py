@@ -298,6 +298,7 @@ def test_opencode_prompt_embeds_context_without_external_artifact_paths(tmp_path
         "verification_policy": "changed_files_only",
         "read_budget_profile": "code_contract_audit",
         "read_budget": {"max_files": 5, "max_worker_turns": 4},
+        "project_memory": {"prompt": "\n## Project Memory\n- README.md: app overview\n"},
     }
 
     prompt = _worker_prompt(task, {"selected_worker": "opencode", "selected_model": "opencode-go/glm-5.2"})
@@ -312,6 +313,8 @@ def test_opencode_prompt_embeds_context_without_external_artifact_paths(tmp_path
     assert "Read budget profile: code_contract_audit" in prompt
     assert '"max_files": 5' in prompt
     assert "Read-only completion rule:" in prompt
+    assert "## Project Memory" in prompt
+    assert "README.md: app overview" in prompt
     assert "Task JSON:" not in prompt
     assert "Route JSON:" not in prompt
 

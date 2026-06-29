@@ -22,6 +22,8 @@ class TaskMetrics:
     input_tokens: int | None = None
     output_tokens: int | None = None
     cache_read_input_tokens: int | None = None
+    memory_hit_count: int | None = None
+    memory_miss_count: int | None = None
     changed_files_count: int = 0
     build_passed: bool | None = None
     review_approved: bool | None = None
@@ -45,6 +47,8 @@ def collect_task_metrics(
     failure_reason: str | None = None,
     build_passed: bool | None = None,
     review_approved: bool | None = None,
+    memory_hit_count: int | None = None,
+    memory_miss_count: int | None = None,
 ) -> TaskMetrics:
     stream = parse_worker_stream(Path(stream_path)) if stream_path else {}
     return TaskMetrics(
@@ -61,6 +65,8 @@ def collect_task_metrics(
         input_tokens=_int_or_none(stream.get("input_tokens")),
         output_tokens=_int_or_none(stream.get("output_tokens")),
         cache_read_input_tokens=_int_or_none(stream.get("cache_read_input_tokens")),
+        memory_hit_count=memory_hit_count,
+        memory_miss_count=memory_miss_count,
         changed_files_count=changed_files_count,
         build_passed=build_passed,
         review_approved=review_approved,

@@ -62,6 +62,8 @@ CREATE TABLE IF NOT EXISTS task_metrics (
   input_tokens INTEGER,
   output_tokens INTEGER,
   cache_read_input_tokens INTEGER,
+  memory_hit_count INTEGER,
+  memory_miss_count INTEGER,
   changed_files_count INTEGER,
   build_passed BOOLEAN,
   review_approved BOOLEAN,
@@ -240,6 +242,13 @@ class TaskDB:
     def init(self) -> None:
         with self.connect() as con:
             con.executescript(SCHEMA)
+            self._ensure_column(con, "task_metrics", "memory_hit_count", "INTEGER")
+            self._ensure_column(con, "task_metrics", "memory_miss_count", "INTEGER")
+
+    def _ensure_column(self, con: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        existing = {row[1] for row in con.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in existing:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def create_task(self, row: dict[str, Any]) -> None:
         self.init()
@@ -323,6 +332,8 @@ class TaskDB:
             "input_tokens",
             "output_tokens",
             "cache_read_input_tokens",
+            "memory_hit_count",
+            "memory_miss_count",
             "changed_files_count",
             "build_passed",
             "review_approved",

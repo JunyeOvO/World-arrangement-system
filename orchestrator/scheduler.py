@@ -25,6 +25,7 @@ from .multimodal import load_image_inputs
 from .outcomes import derive_task_outcome, should_record_outcome
 from .permissions import check_write_paths
 from .pr import create_pr_or_patch
+from .project_memory import ensure_project_memory
 from .project_registry import detect_project, load_projects
 from .task_protocol import (
     apply_read_budget_to_route,
@@ -271,6 +272,7 @@ class OrchestratorService:
             read_budget_profile=read_budget_profile,
             read_budget=read_budget,
         )
+        memory_payload = ensure_project_memory(project_id, project)
         task = {
             "task_id": task_id,
             "project_id": project_id,
@@ -289,6 +291,7 @@ class OrchestratorService:
             "forbidden_paths": project.get("forbidden_paths", []),
             "image_paths": image_paths or [],
             "image_base64": image_base64 or [],
+            "project_memory": memory_payload,
             **protocol,
         }
         if force_worker or force_model or force_variant:
@@ -332,6 +335,7 @@ class OrchestratorService:
                     "verification_policy": protocol["verification_policy"],
                     "read_budget_profile": protocol["read_budget_profile"],
                     "read_budget": protocol["read_budget"],
+                    "project_memory_stats": memory_payload.get("memory", {}).get("stats", {}),
                 },
                 output_payload={
                     "task_id": task_id,
@@ -1341,6 +1345,7 @@ class OrchestratorService:
             changed_files_count=len(result.get("changed_files") or []),
             build_passed=verify.get("build_passed"),
             review_approved=review.get("approved"),
+            **_memory_metric_kwargs(task),
         )
         write_metrics(metrics, run_dir / "attempts" / "01" / "metrics.json")
         write_metrics(metrics, run_dir / "metrics.json")
@@ -1393,6 +1398,7 @@ class OrchestratorService:
             failure_reason=failure.failure_reason if failure else None,
             build_passed=build_passed,
             review_approved=review_approved,
+            **_memory_metric_kwargs(_read_task_artifact(task_id, self.db)),
         )
         metrics_path = Path(self.db.get_task(task_id)["run_dir"]) / "attempts" / f"{attempt_no:02d}" / "metrics.json"
         write_metrics(metrics, metrics_path)
@@ -1548,6 +1554,37 @@ def _read_json_if_exists(path: Path) -> dict[str, Any] | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {"unreadable": str(path)}
+
+
+def _read_task_artifact(task_id: str, db: TaskDB) -> dict[str, Any]:
+    task = db.get_task(task_id)
+    if not task:
+        return {}
+    path = Path(str(task.get("run_dir") or "")) / "task.json"
+    return _read_json_if_exists(path) or {}
+
+
+def _memory_metric_kwargs(task: dict[str, Any]) -> dict[str, int | None]:
+    payload = task.get("project_memory")
+    if not isinstance(payload, dict):
+        return {"memory_hit_count": None, "memory_miss_count": None}
+    memory = payload.get("memory")
+    if not isinstance(memory, dict):
+        return {"memory_hit_count": None, "memory_miss_count": None}
+    stats = memory.get("stats")
+    if not isinstance(stats, dict):
+        return {"memory_hit_count": None, "memory_miss_count": None}
+    return {
+        "memory_hit_count": _int_or_none(stats.get("hit_count")),
+        "memory_miss_count": _int_or_none(stats.get("miss_count")),
+    }
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return None if value is None else int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _write_json_file(path: Path, payload: dict[str, Any]) -> None:
@@ -2055,6 +2092,7 @@ def _worker_prompt(task: dict[str, Any], route: dict[str, Any]) -> str:
             "changed_files=[] instead of making more tool calls.\n"
         )
     profile_strategy = _worker_profile_strategy(task)
+    project_memory = _project_memory_section(task)
     task_section = (
         f"\n\n## Task Context\n\n"
         f"Task: {task['user_goal']}\n"
@@ -2073,6 +2111,7 @@ def _worker_prompt(task: dict[str, Any], route: dict[str, Any]) -> str:
         "World Core will run the listed verification commands after you return; do not spend many turns on full-suite testing.\n"
         "Respect the task mode, expected diff, verification policy, and read budget before exploring more files.\n"
         f"{read_only_completion_rule}"
+        f"{project_memory}"
         f"{profile_strategy}"
         "Return changed_files, summary, test_suggestions, risks, needs_user."
     )
@@ -2096,6 +2135,14 @@ def _worker_prompt(task: dict[str, Any], route: dict[str, Any]) -> str:
         f"Route: {json.dumps(route, ensure_ascii=False)}\n"
         "Return changed_files, summary, test_suggestions, risks."
     )
+
+
+def _project_memory_section(task: dict[str, Any]) -> str:
+    payload = task.get("project_memory")
+    if not isinstance(payload, dict):
+        return ""
+    prompt = payload.get("prompt")
+    return str(prompt) if isinstance(prompt, str) else ""
 
 
 def _worker_profile_strategy(task: dict[str, Any]) -> str:

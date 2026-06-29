@@ -88,6 +88,8 @@ def test_metrics_write_and_db_summary(tmp_path):
         status="success",
         stream_path=str(stream),
         changed_files_count=2,
+        memory_hit_count=3,
+        memory_miss_count=1,
     )
     out = write_metrics(metrics, tmp_path / "metrics.json")
     db = TaskDB(tmp_path / "state.sqlite")
@@ -95,4 +97,6 @@ def test_metrics_write_and_db_summary(tmp_path):
 
     assert json.loads(out.read_text(encoding="utf-8"))["changed_files_count"] == 2
     assert db.list_task_metrics("t1")[0]["total_cost_usd"] == 0.2
+    assert db.list_task_metrics("t1")[0]["memory_hit_count"] == 3
+    assert db.list_task_metrics("t1")[0]["memory_miss_count"] == 1
     assert db.model_metrics_summary()[0]["model"] == "deepseek_pro"
