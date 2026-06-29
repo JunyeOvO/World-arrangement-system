@@ -36,6 +36,47 @@ def test_parse_claude_stream_result_metrics(tmp_path):
     assert parsed["cache_read_input_tokens"] == 10
 
 
+def test_parse_claude_message_usage_and_ignore_thinking_tokens(tmp_path):
+    stream = tmp_path / "worker.stream.jsonl"
+    stream.write_text(
+        json.dumps({"type": "system", "subtype": "thinking_tokens", "estimated_tokens": 12}) + "\n"
+        + json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "usage": {
+                        "input_tokens": 10,
+                        "output_tokens": 2,
+                        "cache_read_input_tokens": 5,
+                    }
+                },
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "usage": {
+                        "input_tokens": 11,
+                        "output_tokens": 3,
+                        "cache_read_input_tokens": 7,
+                    }
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    parsed = parse_worker_stream(stream)
+
+    assert parsed["input_tokens"] == 21
+    assert parsed["output_tokens"] == 5
+    assert parsed["cache_read_input_tokens"] == 12
+    assert parsed.get("failure_reason") is None
+
+
 def test_metrics_write_and_db_summary(tmp_path):
     stream = tmp_path / "worker.stream.jsonl"
     stream.write_text(json.dumps({"total_cost_usd": 0.2, "num_turns": 2}) + "\n", encoding="utf-8")

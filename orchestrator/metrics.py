@@ -104,6 +104,8 @@ def write_metrics(metrics: TaskMetrics, output: Path) -> Path:
 def _merge_event_metrics(metrics: dict[str, Any], event: dict[str, Any]) -> None:
     result = event.get("result") if isinstance(event.get("result"), dict) else event
     usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+    message = event.get("message") if isinstance(event.get("message"), dict) else {}
+    message_usage = message.get("usage") if isinstance(message.get("usage"), dict) else {}
     part = event.get("part") if isinstance(event.get("part"), dict) else {}
 
     for key in ("total_cost_usd", "duration_ms", "duration_api_ms", "num_turns"):
@@ -115,13 +117,15 @@ def _merge_event_metrics(metrics: dict[str, Any], event: dict[str, Any]) -> None
         ("output_tokens", "output_tokens"),
         ("cache_read_input_tokens", "cache_read_input_tokens"),
     ):
-        if source_key in usage:
+        if source_key in message_usage:
+            _add_metric(metrics, target_key, message_usage.get(source_key))
+        elif source_key in usage:
             metrics[target_key] = usage[source_key]
         elif source_key in result:
             metrics[target_key] = result[source_key]
 
     subtype = result.get("subtype") or result.get("error")
-    if isinstance(subtype, str) and subtype:
+    if isinstance(subtype, str) and subtype and subtype not in {"thinking_tokens", "init"}:
         metrics["failure_reason"] = subtype
 
     if event.get("type") == "step_finish":
