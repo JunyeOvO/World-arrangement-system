@@ -258,6 +258,118 @@ small {
   grid-column: 1 / -1;
 }
 
+.route-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.route-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.route-summary > div,
+.route-history,
+.route-reason,
+.route-list,
+.route-rejected {
+  border: 1px solid #e0e7ef;
+  border-radius: 8px;
+  background: #fbfcfe;
+  padding: 10px 12px;
+  min-width: 0;
+}
+
+.route-summary small,
+.route-history small,
+.route-reason small,
+.route-list small,
+.route-rejected small {
+  margin: 0 0 5px;
+}
+
+.route-summary strong,
+.route-history strong {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+}
+
+.route-summary span,
+.route-history span,
+.route-list span {
+  color: #66758a;
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.route-reason p {
+  color: #1d2433;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.route-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.route-list ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.route-list li {
+  color: #1d2433;
+  margin: 3px 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.route-rejected {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.route-rejected-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.route-rejected-row span {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.route-rejected-row code {
+  color: #536579;
+  background: #eef2f6;
+  border-radius: 4px;
+  padding: 2px 5px;
+  font-size: 12px;
+}
+
+.route-raw summary {
+  color: #536579;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.route-raw pre {
+  max-height: 260px;
+  margin: 8px 0 0;
+}
+
 .metrics-summary-panel {
   min-height: 152px;
 }
@@ -815,7 +927,9 @@ dd {
   .summary-kpis,
   .quality-kpis,
   .efficiency-kpis,
-  .codex-kpis {
+  .codex-kpis,
+  .route-summary,
+  .route-columns {
     grid-template-columns: 1fr;
   }
 
