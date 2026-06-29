@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import time
 import uuid
@@ -2129,7 +2130,7 @@ def _next_task_planning_seed_context(task: dict[str, Any]) -> str:
             files.append(path)
         elif path.is_dir():
             for child in path.rglob("*"):
-                if child.is_file() and _is_seed_file(child):
+                if child.is_file() and _is_seed_file(child) and _is_seed_file_size_allowed(child):
                     files.append(child)
     if not files:
         return ""
@@ -2157,6 +2158,11 @@ def _next_task_planning_seed_evidence(worktree: Path, files: list[Path]) -> str:
     blocks: list[str] = []
     total_chars = 0
     for path in files:
+        try:
+            if path.stat().st_size > 256_000:
+                continue
+        except OSError:
+            continue
         try:
             relative = path.relative_to(worktree).as_posix()
         except ValueError:
@@ -2197,16 +2203,36 @@ def _seed_file_excerpt(text: str, limit: int = 900) -> str:
             break
     if not interesting:
         interesting = [line.strip() for line in lines if line.strip()][:20]
-    snippet = "\n".join(interesting)
+    snippet = _redact_seed_excerpt("\n".join(interesting))
     if len(snippet) <= limit:
         return snippet
     return snippet[:limit].rstrip() + "\n[excerpt truncated]"
+
+
+_SEED_SECRET_PATTERNS = (
+    re.compile(r"sk-[A-Za-z0-9_-]{16,}"),
+    re.compile(r"(?i)\b(api[_-]?key|secret|token|password|credential)\b\s*[:=]\s*['\"]?[^'\"\s,}]+"),
+)
+
+
+def _redact_seed_excerpt(text: str) -> str:
+    redacted = text
+    redacted = _SEED_SECRET_PATTERNS[0].sub("[REDACTED_SECRET]", redacted)
+    redacted = _SEED_SECRET_PATTERNS[1].sub(lambda m: f"{m.group(1)}=[REDACTED]", redacted)
+    return redacted
 
 
 def _is_seed_file(path: Path) -> bool:
     if path.name.startswith("."):
         return False
     return path.suffix.lower() in {".js", ".mjs", ".cjs", ".ts", ".tsx", ".json", ".md", ".html", ".css"}
+
+
+def _is_seed_file_size_allowed(path: Path) -> bool:
+    try:
+        return path.stat().st_size <= 256_000
+    except OSError:
+        return False
 
 
 def _seed_file_rank(path: Path) -> tuple[int, str]:

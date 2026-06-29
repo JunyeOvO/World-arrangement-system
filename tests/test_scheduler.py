@@ -321,7 +321,11 @@ def test_next_task_planning_prompt_limits_search_and_requires_early_draft(tmp_pa
     (worktree / "js").mkdir(parents=True)
     (worktree / "tests").mkdir()
     (worktree / "README.md").write_text("# Travel With Me\n", encoding="utf-8")
-    (worktree / "js" / "main.js").write_text("export function boot() {}\nconst staleCandidate = true;\n", encoding="utf-8")
+    (worktree / "js" / "main.js").write_text(
+        "export function boot() {}\nconst staleCandidate = true;\nconst API_KEY = 'sk-thismustberedacted123456';\n",
+        encoding="utf-8",
+    )
+    (worktree / "js" / "bundle.js").write_text("x" * 300_000, encoding="utf-8")
     (worktree / "tests" / "main.test.js").write_text("test('x', () => {})\n", encoding="utf-8")
     task = {
         "user_goal": "挑选下一轮 World 小修候选任务，只读，不修改文件。",
@@ -350,6 +354,9 @@ def test_next_task_planning_prompt_limits_search_and_requires_early_draft(tmp_pa
     assert "- js/main.js" in prompt
     assert "export function boot() {}" in prompt
     assert "const staleCandidate = true;" in prompt
+    assert "API_KEY=[REDACTED]" in prompt
+    assert "sk-thismustberedacted" not in prompt
+    assert "bundle.js" not in prompt
 
 
 def test_non_planning_profile_does_not_get_next_task_strategy(tmp_path):
