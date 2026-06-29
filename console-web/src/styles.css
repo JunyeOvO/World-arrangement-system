@@ -304,6 +304,14 @@ small {
   grid-template-columns: repeat(3, minmax(160px, 1fr));
 }
 
+.quality-kpis {
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+}
+
+.quality-table {
+  margin-top: 12px;
+}
+
 .efficiency-kpis .summary-kpi strong {
   font-size: 20px;
   overflow-wrap: anywhere;
@@ -793,6 +801,7 @@ dd {
   .detail-grid,
   .metrics-page,
   .summary-kpis,
+  .quality-kpis,
   .efficiency-kpis,
   .codex-kpis {
     grid-template-columns: 1fr;

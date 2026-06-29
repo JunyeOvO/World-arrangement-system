@@ -14,6 +14,7 @@ from orchestrator.dashboard_status import (
     derive_dashboard_status,
 )
 from orchestrator.db import TaskDB
+from orchestrator.outcomes import derive_task_outcome, should_record_outcome, summarize_outcomes
 
 from .display_names import display_agent_name, display_model_name, display_route_tree
 from .alerts import evaluate_alerts
@@ -362,12 +363,44 @@ class ConsoleQueries:
             "by_model": model_rows,
         }
 
+    def metrics_quality(self, project_id: str | None = None, limit: int = 500) -> dict[str, Any]:
+        self._backfill_task_outcomes(limit=limit)
+        rows = self.db.list_task_outcomes(project_id=project_id, limit=limit)
+        visible_rows = [_quality_row(row) for row in rows]
+        return {
+            "project_id": project_id,
+            "summary": summarize_outcomes(rows),
+            "rows": visible_rows,
+        }
+
     def _metric_rows(self) -> list[dict[str, Any]]:
         tasks = self.db.list_tasks(limit=500)
         rows: list[dict[str, Any]] = []
         for task in tasks:
             rows.extend(self.db.list_task_metrics(task["task_id"]))
         return rows
+
+    def _backfill_task_outcomes(self, limit: int = 500) -> None:
+        for task in self.db.list_tasks(limit=limit):
+            status = str(task.get("status") or "")
+            task_id = str(task.get("task_id") or "")
+            if not task_id or not should_record_outcome(status) or self.db.get_task_outcome(task_id):
+                continue
+            artifact_index = self.artifacts.index(task_id)
+            task_artifact = self._read_artifact_json(artifact_index, "task.json") or {}
+            verify = self._read_artifact_json(artifact_index, "verify/verify.json") or {}
+            review = self._read_artifact_json(artifact_index, "review/review.json") or {}
+            result = self._read_artifact_json(artifact_index, "result.json") or {}
+            outcome = derive_task_outcome(
+                task,
+                metrics=self.db.list_task_metrics(task_id),
+                task_artifact=task_artifact,
+                verify=verify,
+                review=review,
+                result=result,
+                metadata={"source": "console_backfill"},
+            )
+            self.db.upsert_task_outcome(outcome)
 
     def audit(self, task_id: str | None = None, action: str | None = None, limit: int = 100) -> dict[str, Any]:
         return {"events": [event_view(row) for row in self.db.list_audit_events(task_id, action, limit)]}
@@ -503,6 +536,37 @@ def _tokens_missing(row: dict[str, Any]) -> bool:
         and row.get("output_tokens") is None
         and row.get("cache_read_input_tokens") is None
     )
+
+
+def _quality_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "task_id": row.get("task_id"),
+        "project_id": row.get("project_id"),
+        "task_type": row.get("task_type") or "unknown",
+        "risk_level": row.get("risk_level") or "medium",
+        "agent": display_agent_name(row.get("route_worker")),
+        "model": display_model_name(row.get("route_model")),
+        "terminal_status": row.get("terminal_status") or "",
+        "outcome": row.get("outcome") or "unknown",
+        "quality_state": row.get("quality_state") or "unknown",
+        "user_acceptance": row.get("user_acceptance") or "unknown",
+        "changed_files_count": _metric_int(row.get("changed_files_count")),
+        "tests_passed": _optional_bool(row.get("tests_passed")),
+        "build_passed": _optional_bool(row.get("build_passed")),
+        "review_approved": _optional_bool(row.get("review_approved")),
+        "degraded": bool(row.get("degraded")),
+        "mock_result": bool(row.get("mock_result")),
+        "codex_rework_required": bool(row.get("codex_rework_required")),
+        "completed_at": row.get("completed_at") or row.get("updated_at") or "",
+    }
+
+
+def _optional_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return bool(value)
 
 
 def _codex_usage_summary(events: list[dict[str, Any]]) -> dict[str, Any]:

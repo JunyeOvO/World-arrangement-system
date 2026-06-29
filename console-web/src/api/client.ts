@@ -138,6 +138,49 @@ export type MetricsEfficiency = {
   }>;
 };
 
+export type MetricsQuality = {
+  project_id?: string;
+  summary: {
+    total: number;
+    success: number;
+    failed: number;
+    approval: number;
+    degraded: number;
+    mock_result: number;
+    codex_rework_required: number;
+    accepted: number;
+    rejected: number;
+    success_rate: number;
+    known_acceptance_rate: number;
+    tests_pass_rate: number;
+    review_approval_rate: number;
+    degraded_rate: number;
+    rework_rate: number;
+    by_task_type: Array<{ name: string; total: number; success: number; rework: number; success_rate: number; rework_rate: number }>;
+    by_model: Array<{ name: string; total: number; success: number; rework: number; success_rate: number; rework_rate: number }>;
+  };
+  rows: Array<{
+    task_id: string;
+    project_id: string;
+    task_type: string;
+    risk_level: string;
+    agent: string;
+    model: string;
+    terminal_status: string;
+    outcome: string;
+    quality_state: string;
+    user_acceptance: string;
+    changed_files_count: number;
+    tests_passed?: boolean | null;
+    build_passed?: boolean | null;
+    review_approved?: boolean | null;
+    degraded: boolean;
+    mock_result: boolean;
+    codex_rework_required: boolean;
+    completed_at: string;
+  }>;
+};
+
 export type Alert = {
   alert_id: string;
   severity: string;
@@ -171,6 +214,7 @@ export const api = {
   metrics: () => getJson<MetricsSummary>("/api/metrics/summary"),
   metricsUsage: () => getJson<MetricsUsage>("/api/metrics/usage?limit=200"),
   metricsEfficiency: () => getJson<MetricsEfficiency>("/api/metrics/efficiency"),
+  metricsQuality: (projectId?: string) => getJson<MetricsQuality>(`/api/metrics/quality?limit=500${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ""}`),
   models: () => getJson<{ models: ModelMetric[] }>("/api/metrics/models"),
   audit: () => getJson<{ events: TimelineEvent[] }>("/api/audit?limit=100"),
   cancelTask: (taskId: string) => postJson(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { reason: "console cancel" }),

@@ -8,12 +8,14 @@ from orchestrator.scheduler import (
     _apply_route_override,
     _build_retry_chain,
     _is_retryable_failure,
+    _read_only_failure_summary,
     _should_recover_failed_worker_diff,
     _skip_project_verification_for_read_only_task,
     _task_requires_diff,
     _task_requests_project_verification,
     _worker_prompt,
 )
+from orchestrator.failure_classifier import FailureClassification
 from orchestrator.workers.base import WorkerResult
 
 
@@ -183,9 +185,44 @@ def test_read_only_task_skips_project_verification_without_explicit_request():
     assert _skip_project_verification_for_read_only_task(task, Result())
 
 
+def test_read_only_max_turns_with_text_can_finish_without_fallback(tmp_path):
+    stream = tmp_path / "worker.jsonl"
+    stream.write_text(
+        json.dumps({"type": "result", "subtype": "success", "result": "Read-only audit completed."}) + "\n",
+        encoding="utf-8",
+    )
+    result = WorkerResult(
+        status="failed",
+        summary="Claude Code worker failed",
+        changed_files=[],
+        stdout_path=str(stream),
+    )
+    failure = FailureClassification(
+        "max_turns_no_diff",
+        True,
+        "escalate_model_or_narrow_task",
+    )
+
+    summary = _read_only_failure_summary(
+        {"user_goal": "只读分析项目质量，不修改文件。", "task_type": "analysis"},
+        result,
+        failure,
+    )
+
+    assert summary == "Read-only audit completed."
+
+
 def test_verifiable_path_wording_does_not_force_project_verification():
     task = {
         "user_goal": "简单评价项目质量，按任务性质选择最小可验证路径，只做只读分析，不修改文件。",
+    }
+
+    assert not _task_requests_project_verification(task)
+
+
+def test_read_only_test_command_recommendation_does_not_force_project_verification():
+    task = {
+        "user_goal": "只读判断技术栈和测试命令是否适合 MVP 评估。限定只读文件：package.json、vitest.config.js、playwright.config.js。验收标准：输出最小测试命令，例如 npm test；changed_files=[]。",
     }
 
     assert not _task_requests_project_verification(task)

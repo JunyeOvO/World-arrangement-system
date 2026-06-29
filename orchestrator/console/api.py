@@ -59,6 +59,11 @@ class ConsoleAPI:
             return 200, "application/json", self.queries.metrics_efficiency(
                 params.get("reference_model") or "opencode-go/glm-5.2"
             )
+        if path == "/api/metrics/quality":
+            return 200, "application/json", self.queries.metrics_quality(
+                project_id=params.get("project_id"),
+                limit=_int(params.get("limit"), 500),
+            )
         if path == "/api/audit":
             return 200, "application/json", self.queries.audit(
                 params.get("task_id"),

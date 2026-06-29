@@ -83,6 +83,30 @@ CREATE TABLE IF NOT EXISTS codex_usage_events (
   metadata_json TEXT
 );
 
+CREATE TABLE IF NOT EXISTS task_outcomes (
+  task_id TEXT PRIMARY KEY,
+  project_id TEXT,
+  task_type TEXT,
+  risk_level TEXT,
+  route_worker TEXT,
+  route_model TEXT,
+  terminal_status TEXT,
+  outcome TEXT,
+  quality_state TEXT,
+  user_acceptance TEXT,
+  changed_files_count INTEGER,
+  tests_passed BOOLEAN,
+  build_passed BOOLEAN,
+  review_approved BOOLEAN,
+  degraded BOOLEAN,
+  mock_result BOOLEAN,
+  codex_rework_required BOOLEAN,
+  created_at TEXT,
+  updated_at TEXT,
+  completed_at TEXT,
+  metadata_json TEXT
+);
+
 CREATE TABLE IF NOT EXISTS approval_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id TEXT NOT NULL,
@@ -403,6 +427,112 @@ class TaskDB:
                 item["metadata"] = {}
             result.append(item)
         return result
+
+    def upsert_task_outcome(self, row: dict[str, Any]) -> None:
+        self.init()
+        cols = [
+            "task_id",
+            "project_id",
+            "task_type",
+            "risk_level",
+            "route_worker",
+            "route_model",
+            "terminal_status",
+            "outcome",
+            "quality_state",
+            "user_acceptance",
+            "changed_files_count",
+            "tests_passed",
+            "build_passed",
+            "review_approved",
+            "degraded",
+            "mock_result",
+            "codex_rework_required",
+            "created_at",
+            "updated_at",
+            "completed_at",
+            "metadata_json",
+        ]
+        values = [
+            row.get("task_id"),
+            row.get("project_id"),
+            row.get("task_type"),
+            row.get("risk_level"),
+            row.get("route_worker"),
+            row.get("route_model"),
+            row.get("terminal_status"),
+            row.get("outcome"),
+            row.get("quality_state"),
+            row.get("user_acceptance", "unknown"),
+            int(row.get("changed_files_count") or 0),
+            row.get("tests_passed"),
+            row.get("build_passed"),
+            row.get("review_approved"),
+            bool(row.get("degraded")),
+            bool(row.get("mock_result")),
+            bool(row.get("codex_rework_required")),
+            row.get("created_at"),
+            row.get("updated_at"),
+            row.get("completed_at"),
+            json.dumps(_json_safe(row.get("metadata") or row.get("metadata_json") or {}), ensure_ascii=False),
+        ]
+        assignments = ", ".join(f"{c}=excluded.{c}" for c in cols[1:])
+        with self.connect() as con:
+            con.execute(
+                f"""
+                INSERT INTO task_outcomes ({','.join(cols)})
+                VALUES ({','.join(['?'] * len(cols))})
+                ON CONFLICT(task_id) DO UPDATE SET {assignments}
+                """,
+                values,
+            )
+
+    def list_task_outcomes(
+        self,
+        project_id: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        self.init()
+        limit = max(1, min(int(limit), 2000))
+        params: list[Any] = []
+        where = ""
+        if project_id:
+            where = "WHERE project_id=?"
+            params.append(project_id)
+        with self.connect() as con:
+            rows = con.execute(
+                f"""
+                SELECT * FROM task_outcomes
+                {where}
+                ORDER BY completed_at DESC, updated_at DESC, task_id DESC
+                LIMIT ?
+                """,
+                [*params, limit],
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            raw_metadata = item.pop("metadata_json", None)
+            try:
+                item["metadata"] = json.loads(raw_metadata or "{}")
+            except json.JSONDecodeError:
+                item["metadata"] = {}
+            result.append(item)
+        return result
+
+    def get_task_outcome(self, task_id: str) -> dict[str, Any] | None:
+        self.init()
+        with self.connect() as con:
+            row = con.execute("SELECT * FROM task_outcomes WHERE task_id=?", [task_id]).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        raw_metadata = item.pop("metadata_json", None)
+        try:
+            item["metadata"] = json.loads(raw_metadata or "{}")
+        except json.JSONDecodeError:
+            item["metadata"] = {}
+        return item
 
     def model_metrics_summary(self) -> list[dict[str, Any]]:
         self.init()

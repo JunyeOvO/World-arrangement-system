@@ -649,3 +649,55 @@ def test_metrics_efficiency_reports_real_token_cost_and_reference_baseline(tmp_p
     assert payload["codex"]["quota_goal"]["required_codex_reduction_pct"] == 71.43
     assert payload["by_model"][0]["model"] == "Deepseek-V4-flash"
     assert payload["by_model"][0]["savings_usd"] == 1.8006
+
+
+def test_metrics_quality_backfills_task_outcomes(tmp_path: Path):
+    service = StubService(tmp_path)
+    task_id = _create_task(service, status="COMPLETED_WITH_PATCH", task_id="task_quality")
+    service.artifacts.write_json(task_id, "task.json", {
+        "task_id": task_id,
+        "task_type": "read_only_analysis",
+        "risk_level": "low",
+    })
+    service.artifacts.write_json(task_id, "verify/verify.json", {
+        "tests_passed": True,
+        "build_passed": True,
+        "changed_files": [],
+    })
+    service.artifacts.write_json(task_id, "review/review.json", {
+        "approved": True,
+        "review_mode": "local",
+    })
+    service.db.upsert_task_metrics({
+        "task_id": task_id,
+        "attempt_no": 1,
+        "worker": "claude_code",
+        "model": "deepseek_flash",
+        "status": "success",
+        "failure_reason": "",
+        "total_cost_usd": 0.0,
+        "duration_ms": 100,
+        "duration_api_ms": 80,
+        "num_turns": 1,
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "cache_read_input_tokens": 0,
+        "changed_files_count": 0,
+        "build_passed": True,
+        "review_approved": True,
+        "created_at": "2026-06-29T00:00:00Z",
+    })
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    status, _, payload = api.handle_get("/api/metrics/quality")
+
+    assert status == 200
+    assert payload["summary"]["total"] == 1
+    assert payload["summary"]["success_rate"] == 100.0
+    assert payload["summary"]["tests_pass_rate"] == 100.0
+    assert payload["summary"]["review_approval_rate"] == 100.0
+    assert payload["rows"][0]["task_id"] == task_id
+    assert payload["rows"][0]["outcome"] == "success"
+    assert payload["rows"][0]["tests_passed"] is True
+    assert payload["rows"][0]["review_approved"] is True
+    assert service.db.get_task_outcome(task_id) is not None

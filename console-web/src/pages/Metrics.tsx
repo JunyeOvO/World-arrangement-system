@@ -1,15 +1,17 @@
 import { CSSProperties, useEffect, useMemo, useState } from "react";
 import { ChartColumn, CircleDollarSign, Clock3, Gauge, Scale } from "lucide-react";
-import { api, ConsoleSnapshot, MetricsEfficiency, MetricsUsage } from "../api/client";
+import { api, ConsoleSnapshot, MetricsEfficiency, MetricsQuality, MetricsUsage } from "../api/client";
 
 export function Metrics({ snapshot }: { snapshot: ConsoleSnapshot }) {
   const [usage, setUsage] = useState<MetricsUsage | null>(null);
   const [efficiency, setEfficiency] = useState<MetricsEfficiency | null>(null);
+  const [quality, setQuality] = useState<MetricsQuality | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     api.metricsUsage().then(setUsage).catch((err) => setError(err.message));
     api.metricsEfficiency().then(setEfficiency).catch((err) => setError(err.message));
+    api.metricsQuality().then(setQuality).catch((err) => setError(err.message));
   }, []);
 
   return (
@@ -24,6 +26,7 @@ export function Metrics({ snapshot }: { snapshot: ConsoleSnapshot }) {
         </div>
       </section>
       <ModelSummary models={snapshot.models} />
+      <QualityPanel quality={quality} />
       <EfficiencyPanel efficiency={efficiency} />
       <section className="panel metrics-wide">
         <h2>Cost by Model</h2>
@@ -35,6 +38,60 @@ export function Metrics({ snapshot }: { snapshot: ConsoleSnapshot }) {
         <UsageTable usage={usage} />
       </section>
     </div>
+  );
+}
+
+function QualityPanel({ quality }: { quality: MetricsQuality | null }) {
+  return (
+    <section className="panel metrics-wide">
+      <div className="panel-head">
+        <h2>Quality Matrix</h2>
+        {quality && <span className="process-count">{quality.summary.total}</span>}
+      </div>
+      {!quality ? (
+        <div className="empty-process"><Gauge size={20} /><span>Loading quality metrics...</span></div>
+      ) : (
+        <>
+          <div className="summary-kpis quality-kpis">
+            <MetricKpi label="Success rate" value={`${quality.summary.success_rate.toFixed(0)}%`} icon={<Gauge size={18} />} />
+            <MetricKpi label="Acceptance" value={`${quality.summary.known_acceptance_rate.toFixed(0)}%`} icon={<ChartColumn size={18} />} />
+            <MetricKpi label="Review passed" value={`${quality.summary.review_approval_rate.toFixed(0)}%`} icon={<Scale size={18} />} />
+            <MetricKpi label="Rework needed" value={`${quality.summary.rework_rate.toFixed(0)}%`} icon={<Clock3 size={18} />} />
+          </div>
+          <div className="table-wrap quality-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Type</th>
+                  <th>Route</th>
+                  <th>Outcome</th>
+                  <th>Quality</th>
+                  <th>Changed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {quality.rows.length === 0 && (
+                  <tr>
+                    <td colSpan={6}>No quality outcomes recorded yet</td>
+                  </tr>
+                )}
+                {quality.rows.slice(0, 12).map((row) => (
+                  <tr key={row.task_id}>
+                    <td><code>{row.task_id}</code><small>{formatDateTime(row.completed_at)}</small></td>
+                    <td>{row.task_type}<small>{row.risk_level}</small></td>
+                    <td><code>{row.model || "unknown"}</code><small>{row.agent || "unknown"}</small></td>
+                    <td>{row.outcome}<small>{row.terminal_status}</small></td>
+                    <td>{row.quality_state}<small>{row.codex_rework_required ? "rework" : row.user_acceptance}</small></td>
+                    <td>{row.changed_files_count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 

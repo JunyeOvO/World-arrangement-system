@@ -21,6 +21,7 @@ from .failure_classifier import (
 )
 from .metrics import collect_task_metrics, write_metrics
 from .multimodal import load_image_inputs
+from .outcomes import derive_task_outcome, should_record_outcome
 from .permissions import check_write_paths
 from .pr import create_pr_or_patch
 from .project_registry import detect_project, load_projects
@@ -771,6 +772,17 @@ class OrchestratorService:
                 attempt["failure"] = failure.to_dict()
                 last_failure = failure
                 last_attempt = attempt
+                salvaged_summary = _read_only_failure_summary(task, worker_result, failure)
+                if salvaged_summary:
+                    worker_result.status = "success"
+                    worker_result.summary = salvaged_summary
+                    worker_result.risks.append("read_only_no_diff_salvaged_from_worker_failure")
+                    attempt["status"] = "success"
+                    attempt["summary"] = salvaged_summary
+                    attempt.pop("failure_reason", None)
+                    attempt.pop("failure", None)
+                    failure = None
+                    last_failure = None
             self.artifacts.write_json(task_id, f"attempts/{idx + 1:02d}/result.json", attempt)
             self.artifacts.write_json(task_id, "result.json", worker_result.__dict__)
             self._write_attempt_metrics(task_id, idx + 1, attempt, worker_result, failure)
@@ -1182,6 +1194,29 @@ class OrchestratorService:
         self.db.update_task(task_id, status=status, updated_at=_now())
         self._sync_task_artifact_from_db(task_id)
         self.db.append_event(task_id, event_type, old_status, status, payload)
+        if should_record_outcome(status):
+            self._record_task_outcome(task_id, {"event_type": event_type})
+
+    def _record_task_outcome(self, task_id: str, metadata: dict[str, Any] | None = None) -> None:
+        task = self.db.get_task(task_id)
+        if not task:
+            return
+        run_dir = Path(str(task.get("run_dir") or ""))
+        task_artifact = _read_json_if_exists(run_dir / "task.json") or {}
+        verify = _read_json_if_exists(run_dir / "verify" / "verify.json") or {}
+        review = _read_json_if_exists(run_dir / "review" / "review.json") or {}
+        result = _read_json_if_exists(run_dir / "result.json") or {}
+        outcome = derive_task_outcome(
+            task,
+            metrics=self.db.list_task_metrics(task_id),
+            task_artifact=task_artifact if isinstance(task_artifact, dict) else {},
+            verify=verify if isinstance(verify, dict) else {},
+            review=review if isinstance(review, dict) else {},
+            result=result if isinstance(result, dict) else {},
+            metadata=metadata,
+        )
+        self.db.upsert_task_outcome(outcome)
+        self.artifacts.write_json(task_id, "outcome.json", outcome)
 
     def _sync_task_artifact_from_db(self, task_id: str) -> bool:
         task = self.db.get_task(task_id)
@@ -1552,6 +1587,25 @@ def _read_only_result_can_finish(task: dict[str, Any], worker_result: Any) -> bo
     )
 
 
+def _read_only_failure_summary(
+    task: dict[str, Any],
+    worker_result: Any,
+    failure: FailureClassification | None,
+) -> str | None:
+    if _task_requires_diff(task) or getattr(worker_result, "changed_files", []):
+        return None
+    if not failure or failure.failure_reason not in {"max_turns_no_diff", "worker_no_diff"}:
+        return None
+    stdout_path = getattr(worker_result, "stdout_path", None)
+    summary = _extract_worker_success_text(Path(str(stdout_path))) if stdout_path else None
+    if summary:
+        return summary
+    raw_summary = str(getattr(worker_result, "summary", "") or "").strip()
+    if raw_summary and raw_summary.lower() not in {"claude code worker failed", "opencode worker failed"}:
+        return raw_summary
+    return None
+
+
 def _read_only_review(task: dict[str, Any], reason: str = "read_only_no_diff") -> dict[str, Any]:
     return {
         "approved": True,
@@ -1819,11 +1873,11 @@ def _task_requests_project_verification(task: dict[str, Any]) -> bool:
     verification_markers = (
         "run tests",
         "run test",
-        "npm test",
-        "npm run check",
-        "pytest",
-        "vitest",
-        "playwright",
+        "run npm test",
+        "run npm run check",
+        "run pytest",
+        "run vitest",
+        "run playwright",
         "运行验证",
         "执行验证",
         "跑验证",
@@ -1831,7 +1885,21 @@ def _task_requests_project_verification(task: dict[str, Any]) -> bool:
         "跑测试",
         "执行测试",
     )
-    return any(marker in goal for marker in verification_markers)
+    if any(marker in goal for marker in verification_markers):
+        return True
+    command_only_markers = ("npm test", "npm run check")
+    command_reference_markers = (
+        "输出",
+        "列出",
+        "建议",
+        "推荐",
+        "最小测试命令",
+        "test_suggestions",
+        "测试命令",
+    )
+    if any(marker in goal for marker in command_only_markers):
+        return not any(marker in goal for marker in command_reference_markers)
+    return False
 
 
 def _skip_project_verification_for_read_only_task(task: dict[str, Any], worker_result: Any) -> bool:
