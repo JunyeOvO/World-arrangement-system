@@ -2104,8 +2104,8 @@ def _worker_profile_strategy(task: dict[str, Any]) -> str:
     return (
         "Next-task planning strategy:\n"
         "- Do not use Agent/subagent tools for this profile; keep reasoning in the current worker.\n"
-        "- Do not run shell commands for this profile; use the seed file list below and Read only.\n"
-        "- Read at most 6 files total.\n"
+        "- Do not run shell commands for this profile; use the seed evidence below first.\n"
+        "- Read at most 3 additional files total, only when the seed evidence is insufficient.\n"
         "- After the first plausible next task candidate is identified, stop broad exploration and draft the final result.\n"
         "- The final summary may contain 1 to 3 candidates; one high-confidence candidate is better than timing out.\n"
         "- Each candidate must include target files, acceptance criteria, risk, recommended model route, and changed_files=[].\n"
@@ -2141,7 +2141,66 @@ def _next_task_planning_seed_context(task: dict[str, Any]) -> str:
         except ValueError:
             continue
         lines.append(f"- {relative}")
+    evidence = _next_task_planning_seed_evidence(worktree, files[:8])
+    if evidence:
+        lines.extend(
+            [
+                "",
+                "Seed evidence excerpts; use these excerpts before calling Read:",
+                evidence.rstrip(),
+            ]
+        )
     return "\n".join(lines) + "\n"
+
+
+def _next_task_planning_seed_evidence(worktree: Path, files: list[Path]) -> str:
+    blocks: list[str] = []
+    total_chars = 0
+    for path in files:
+        try:
+            relative = path.relative_to(worktree).as_posix()
+        except ValueError:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        snippet = _seed_file_excerpt(text)
+        if not snippet:
+            continue
+        block = f"### {relative}\n```text\n{snippet}\n```\n"
+        if total_chars + len(block) > 7000:
+            break
+        blocks.append(block)
+        total_chars += len(block)
+    return "\n".join(blocks)
+
+
+def _seed_file_excerpt(text: str, limit: int = 900) -> str:
+    lines = [line.rstrip() for line in text.splitlines()]
+    interesting: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        lowered = stripped.lower()
+        if (
+            stripped.startswith(("#", "export ", "function ", "async function ", "class ", "const ", "let "))
+            or "todo" in lowered
+            or "fixme" in lowered
+            or "test(" in lowered
+            or "describe(" in lowered
+            or "throw new" in lowered
+        ):
+            interesting.append(stripped)
+        if len("\n".join(interesting)) >= limit:
+            break
+    if not interesting:
+        interesting = [line.strip() for line in lines if line.strip()][:20]
+    snippet = "\n".join(interesting)
+    if len(snippet) <= limit:
+        return snippet
+    return snippet[:limit].rstrip() + "\n[excerpt truncated]"
 
 
 def _is_seed_file(path: Path) -> bool:
