@@ -97,6 +97,8 @@ def test_submit_task_cli_writes_explicit_protocol(tmp_path, monkeypatch, capsys)
         "false",
         "--verification-policy",
         "changed_files_only",
+        "--read-budget-profile",
+        "code_contract_audit",
         "--read-budget",
         "max_files=5",
         "--read-budget",
@@ -109,5 +111,7 @@ def test_submit_task_cli_writes_explicit_protocol(tmp_path, monkeypatch, capsys)
     assert task["task_mode"] == "read_only"
     assert task["expected_diff"] is False
     assert task["verification_policy"] == "changed_files_only"
+    assert task["read_budget_profile"] == "code_contract_audit"
     assert task["read_budget"]["max_files"] == 5
     assert task["read_budget"]["max_worker_turns"] == 4
+    assert task["read_budget"]["max_duration_sec"] == 150

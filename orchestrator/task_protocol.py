@@ -6,6 +6,36 @@ from typing import Any
 
 TASK_MODES = {"read_only", "patch", "test", "docs", "audit"}
 VERIFICATION_POLICIES = {"none", "changed_files_only", "unit", "full"}
+READ_BUDGET_PROFILES = {
+    "quick_triage": {
+        "max_files": 6,
+        "max_dirs": 2,
+        "max_worker_turns": 6,
+        "max_duration_sec": 90,
+        "max_output_tokens": 2500,
+    },
+    "code_contract_audit": {
+        "max_files": 10,
+        "max_dirs": 4,
+        "max_worker_turns": 10,
+        "max_duration_sec": 150,
+        "max_output_tokens": 4000,
+    },
+    "next_task_planning": {
+        "max_files": 12,
+        "max_dirs": 4,
+        "max_worker_turns": 10,
+        "max_duration_sec": 150,
+        "max_output_tokens": 4000,
+    },
+    "docs_review": {
+        "max_files": 6,
+        "max_dirs": 2,
+        "max_worker_turns": 6,
+        "max_duration_sec": 90,
+        "max_output_tokens": 3000,
+    },
+}
 READ_BUDGET_FIELDS = {
     "max_files": 8,
     "max_dirs": 3,
@@ -21,6 +51,7 @@ def normalize_task_protocol(
     task_mode: str | None = None,
     expected_diff: bool | None = None,
     verification_policy: str | None = None,
+    read_budget_profile: str | None = None,
     read_budget: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     frontmatter = parse_task_protocol_frontmatter(user_goal)
@@ -38,11 +69,22 @@ def normalize_task_protocol(
         VERIFICATION_POLICIES,
         _default_verification_policy(mode, diff),
     )
-    budget = normalize_read_budget({**_frontmatter_budget(frontmatter), **(read_budget or {})})
+    profile = normalize_read_budget_profile(
+        read_budget_profile or frontmatter.get("read_budget_profile"),
+        default=_default_read_budget_profile(mode, user_goal),
+    )
+    budget = normalize_read_budget(
+        {
+            **READ_BUDGET_PROFILES.get(profile, {}),
+            **_frontmatter_budget(frontmatter),
+            **(read_budget or {}),
+        }
+    )
     return {
         "task_mode": mode,
         "expected_diff": diff,
         "verification_policy": policy,
+        "read_budget_profile": profile,
         "read_budget": budget,
     }
 
@@ -61,7 +103,7 @@ def parse_task_protocol_frontmatter(user_goal: str) -> dict[str, Any]:
         normalized_key = key.lower().replace("-", "_")
         if normalized_key.startswith("read_budget."):
             budget[normalized_key.split(".", 1)[1]] = value
-        elif normalized_key in {"task_mode", "expected_diff", "verification_policy"}:
+        elif normalized_key in {"task_mode", "expected_diff", "verification_policy", "read_budget_profile"}:
             fields[normalized_key] = value
     if budget:
         fields["read_budget"] = budget
@@ -74,6 +116,14 @@ def normalize_read_budget(value: dict[str, Any] | None = None) -> dict[str, int]
     for key, default in READ_BUDGET_FIELDS.items():
         budget[key] = _positive_int(raw.get(key), default)
     return budget
+
+
+def normalize_read_budget_profile(value: Any, default: str = "quick_triage") -> str:
+    candidate = str(value or "").strip().lower().replace("-", "_")
+    if candidate in READ_BUDGET_PROFILES:
+        return candidate
+    fallback = str(default or "quick_triage").strip().lower().replace("-", "_")
+    return fallback if fallback in READ_BUDGET_PROFILES else "quick_triage"
 
 
 def verification_commands_for_policy(
@@ -110,6 +160,17 @@ def _default_verification_policy(task_mode: str, expected_diff: bool) -> str:
     if task_mode in {"read_only", "audit"} or not expected_diff:
         return "changed_files_only"
     return "full"
+
+
+def _default_read_budget_profile(task_mode: str, user_goal: str) -> str:
+    goal = str(user_goal or "").lower()
+    if task_mode == "docs" or any(marker in goal for marker in ("readme", "文档", "onboarding")):
+        return "docs_review"
+    if any(marker in goal for marker in ("contract", "数据契约", "workarea", "3d", "架构", "architecture")):
+        return "code_contract_audit"
+    if any(marker in goal for marker in ("next task", "下一轮", "下一步", "候选任务", "task candidates")):
+        return "next_task_planning"
+    return "quick_triage"
 
 
 def _infer_task_mode(user_goal: str) -> str:

@@ -10,6 +10,7 @@ def test_frontmatter_protocol_overrides_goal_keywords():
         """task_mode: read_only
 expected_diff: false
 verification_policy: changed_files_only
+read_budget_profile: code_contract_audit
 read_budget.max_files: 5
 read_budget.max_worker_turns: 4
 
@@ -20,8 +21,32 @@ read_budget.max_worker_turns: 4
     assert protocol["task_mode"] == "read_only"
     assert protocol["expected_diff"] is False
     assert protocol["verification_policy"] == "changed_files_only"
+    assert protocol["read_budget_profile"] == "code_contract_audit"
     assert protocol["read_budget"]["max_files"] == 5
     assert protocol["read_budget"]["max_worker_turns"] == 4
+
+
+def test_named_profile_supplies_budget_and_explicit_budget_overrides():
+    protocol = normalize_task_protocol(
+        "只读调查 3D workArea 数据契约风险",
+        read_budget_profile="code_contract_audit",
+        read_budget={"max_files": 7},
+    )
+
+    assert protocol["read_budget_profile"] == "code_contract_audit"
+    assert protocol["read_budget"]["max_files"] == 7
+    assert protocol["read_budget"]["max_worker_turns"] == 10
+    assert protocol["read_budget"]["max_duration_sec"] == 150
+
+
+def test_budget_profile_is_inferred_from_goal_shape():
+    contract = normalize_task_protocol("只读调查 3D workArea 数据契约风险")
+    planning = normalize_task_protocol("挑选下一轮 World 真实小修的候选任务")
+    docs = normalize_task_protocol("评估 README onboarding 缺口")
+
+    assert contract["read_budget_profile"] == "code_contract_audit"
+    assert planning["read_budget_profile"] == "next_task_planning"
+    assert docs["read_budget_profile"] == "docs_review"
 
 
 def test_patch_mode_defaults_to_full_verification_and_diff():

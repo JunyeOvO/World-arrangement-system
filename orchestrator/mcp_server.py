@@ -56,6 +56,7 @@ def create_server():
         task_mode: str | None = None,
         expected_diff: bool | None = None,
         verification_policy: str | None = None,
+        read_budget_profile: str | None = None,
         read_budget: dict | None = None,
     ):
         return service.submit_task(
@@ -69,6 +70,7 @@ def create_server():
             task_mode=task_mode,
             expected_diff=expected_diff,
             verification_policy=verification_policy,
+            read_budget_profile=read_budget_profile,
             read_budget=read_budget,
         )
 
@@ -84,6 +86,7 @@ def create_server():
         task_mode: str | None = None,
         expected_diff: bool | None = None,
         verification_policy: str | None = None,
+        read_budget_profile: str | None = None,
         read_budget: dict | None = None,
     ):
         return service.submit_current_project_task(
@@ -97,6 +100,7 @@ def create_server():
             task_mode=task_mode,
             expected_diff=expected_diff,
             verification_policy=verification_policy,
+            read_budget_profile=read_budget_profile,
             read_budget=read_budget,
         )
 

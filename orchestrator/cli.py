@@ -50,6 +50,11 @@ def main(argv: list[str] | None = None) -> int:
     submit.add_argument("--task-mode", choices=["read_only", "patch", "test", "docs", "audit"], default=None)
     submit.add_argument("--expected-diff", choices=["true", "false"], default=None)
     submit.add_argument("--verification-policy", choices=["none", "changed_files_only", "unit", "full"], default=None)
+    submit.add_argument(
+        "--read-budget-profile",
+        choices=["quick_triage", "code_contract_audit", "next_task_planning", "docs_review"],
+        default=None,
+    )
     submit.add_argument("--read-budget", action="append", default=[], help="Read budget entry as key=value, e.g. max_files=8")
     status = sub.add_parser("get-task-status")
     status.add_argument("--task-id", required=True)
@@ -103,6 +108,7 @@ def main(argv: list[str] | None = None) -> int:
                 task_mode=args.task_mode,
                 expected_diff=_parse_optional_bool(args.expected_diff),
                 verification_policy=args.verification_policy,
+                read_budget_profile=args.read_budget_profile,
                 read_budget=_parse_read_budget(args.read_budget),
             )
         )

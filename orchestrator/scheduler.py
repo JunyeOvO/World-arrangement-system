@@ -214,6 +214,7 @@ class OrchestratorService:
         task_mode: str | None = None,
         expected_diff: bool | None = None,
         verification_policy: str | None = None,
+        read_budget_profile: str | None = None,
         read_budget: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         match = detect_project(repo_path=repo_path or ".")
@@ -231,6 +232,7 @@ class OrchestratorService:
             task_mode=task_mode,
             expected_diff=expected_diff,
             verification_policy=verification_policy,
+            read_budget_profile=read_budget_profile,
             read_budget=read_budget,
         )
 
@@ -250,6 +252,7 @@ class OrchestratorService:
         task_mode: str | None = None,
         expected_diff: bool | None = None,
         verification_policy: str | None = None,
+        read_budget_profile: str | None = None,
         read_budget: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         projects = load_projects()
@@ -264,6 +267,7 @@ class OrchestratorService:
             task_mode=task_mode,
             expected_diff=expected_diff,
             verification_policy=verification_policy,
+            read_budget_profile=read_budget_profile,
             read_budget=read_budget,
         )
         task = {
@@ -325,6 +329,7 @@ class OrchestratorService:
                     "task_mode": protocol["task_mode"],
                     "expected_diff": protocol["expected_diff"],
                     "verification_policy": protocol["verification_policy"],
+                    "read_budget_profile": protocol["read_budget_profile"],
                     "read_budget": protocol["read_budget"],
                 },
                 output_payload={
@@ -1178,6 +1183,7 @@ class OrchestratorService:
             plan_result["plan"]["task_mode"] = task.get("task_mode")
             plan_result["plan"]["expected_diff"] = task.get("expected_diff")
             plan_result["plan"]["verification_policy"] = task.get("verification_policy")
+            plan_result["plan"]["read_budget_profile"] = task.get("read_budget_profile")
             plan_result["plan"]["read_budget"] = task.get("read_budget")
             self.artifacts.write_json(task_id, "world_plan.json", plan_result["plan"])
             self.artifacts.write_json(
@@ -2001,6 +2007,7 @@ def _worker_prompt(task: dict[str, Any], route: dict[str, Any]) -> str:
         f"Task mode: {task.get('task_mode', 'patch')}\n"
         f"Expected diff: {json.dumps(task.get('expected_diff', True), ensure_ascii=False)}\n"
         f"Verification policy: {task.get('verification_policy', 'full')}\n"
+        f"Read budget profile: {task.get('read_budget_profile', 'quick_triage')}\n"
         f"Read budget: {json.dumps(task.get('read_budget', {}), ensure_ascii=False)}\n"
         "Do not read run artifacts outside the worktree; this prompt is the authoritative task context.\n"
         "World Core will run the listed verification commands after you return; do not spend many turns on full-suite testing.\n"

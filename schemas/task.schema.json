@@ -15,6 +15,7 @@
     "task_mode": { "type": "string", "enum": ["read_only", "patch", "test", "docs", "audit"] },
     "expected_diff": { "type": "boolean" },
     "verification_policy": { "type": "string", "enum": ["none", "changed_files_only", "unit", "full"] },
+    "read_budget_profile": { "type": "string", "enum": ["quick_triage", "code_contract_audit", "next_task_planning", "docs_review"] },
     "read_budget": {
       "type": "object",
       "properties": {

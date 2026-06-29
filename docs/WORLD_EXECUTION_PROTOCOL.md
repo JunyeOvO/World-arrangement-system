@@ -8,6 +8,7 @@ World tasks should carry explicit execution fields instead of relying only on na
 task_mode: read_only | patch | test | docs | audit
 expected_diff: true | false
 verification_policy: none | changed_files_only | unit | full
+read_budget_profile: quick_triage | code_contract_audit | next_task_planning | docs_review
 read_budget:
   max_files: 8
   max_dirs: 3
@@ -25,9 +26,21 @@ read_budget:
   - `changed_files_only`: check changed files and forbidden paths, but run no project test/build commands.
   - `unit`: run the first configured test command only.
   - `full`: run all configured test and build commands.
+- `read_budget_profile`: named budget defaults for common task shapes.
 - `read_budget.max_worker_turns`: passed to workers that support turn limits.
 - `read_budget.max_duration_sec`: passed to worker process timeout.
 - `read_budget.max_files`, `max_dirs`, and `max_output_tokens`: included in the worker prompt as hard budget guidance.
+
+Named profiles:
+
+| Profile | Files | Dirs | Turns | Timeout | Output | Use |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `quick_triage` | 6 | 2 | 6 | 90s | 2500 | Fast bounded checks. |
+| `code_contract_audit` | 10 | 4 | 10 | 150s | 4000 | Cross-file contracts and architecture/data-flow checks. |
+| `next_task_planning` | 12 | 4 | 10 | 150s | 4000 | Selecting next implementation candidates. |
+| `docs_review` | 6 | 2 | 6 | 90s | 3000 | README/docs onboarding and documentation gaps. |
+
+Explicit `read_budget.*` values override the selected profile for that task.
 
 ## CLI Example
 
@@ -40,6 +53,7 @@ uv run ai-dispatcher submit-task `
   --task-mode read_only `
   --expected-diff false `
   --verification-policy changed_files_only `
+  --read-budget-profile code_contract_audit `
   --read-budget max_files=8 `
   --read-budget max_worker_turns=6 `
   --read-budget max_duration_sec=90 `
@@ -58,6 +72,7 @@ world_self_analysis: false
 task_mode: read_only
 expected_diff: false
 verification_policy: changed_files_only
+read_budget_profile: code_contract_audit
 read_budget.max_files: 8
 read_budget.max_worker_turns: 6
 read_budget.max_duration_sec: 90
@@ -76,5 +91,6 @@ When fields are omitted, World still infers conservative defaults:
 - Read-only or audit-like goals default to `task_mode=read_only`, `expected_diff=false`, `verification_policy=changed_files_only`.
 - Test-like goals default to `task_mode=test`, `verification_policy=unit`.
 - Patch-like goals default to `task_mode=patch`, `expected_diff=true`, `verification_policy=full`.
+- Budget profiles are inferred when omitted: docs goals use `docs_review`, cross-file contract/architecture goals use `code_contract_audit`, next-task planning goals use `next_task_planning`, and other tasks use `quick_triage`.
 
 Explicit fields always win over natural-language inference.

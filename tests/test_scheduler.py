@@ -264,6 +264,7 @@ def test_opencode_prompt_embeds_context_without_external_artifact_paths(tmp_path
         "task_mode": "read_only",
         "expected_diff": False,
         "verification_policy": "changed_files_only",
+        "read_budget_profile": "code_contract_audit",
         "read_budget": {"max_files": 5, "max_worker_turns": 4},
     }
 
@@ -276,6 +277,7 @@ def test_opencode_prompt_embeds_context_without_external_artifact_paths(tmp_path
     assert "Task mode: read_only" in prompt
     assert "Expected diff: false" in prompt
     assert "Verification policy: changed_files_only" in prompt
+    assert "Read budget profile: code_contract_audit" in prompt
     assert '"max_files": 5' in prompt
     assert "Task JSON:" not in prompt
     assert "Route JSON:" not in prompt
