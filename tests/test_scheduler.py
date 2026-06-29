@@ -456,6 +456,7 @@ def test_scheduler_writes_verify_and_metrics_artifacts(tmp_path, monkeypatch):
     review_payload = json.loads((run_dir / "review" / "review.json").read_text(encoding="utf-8"))
     final_md = (run_dir / "final.md").read_text(encoding="utf-8")
     metrics_payload = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+    ledger_payload = json.loads((run_dir / "token_ledger.json").read_text(encoding="utf-8"))
     db_metrics = service.db.list_task_metrics(result["task_id"])
 
     assert verify_payload["tests_passed"] is True
@@ -467,6 +468,10 @@ def test_scheduler_writes_verify_and_metrics_artifacts(tmp_path, monkeypatch):
     assert "degraded_mock_result" in final_md
     assert metrics_payload["task_id"] == result["task_id"]
     assert db_metrics[0]["model"] == "deepseek_pro"
+    assert ledger_payload["task_id"] == result["task_id"]
+    assert ledger_payload["codex"]["event_count"] >= 1
+    assert ledger_payload["worker"]["attempts"] == 1
+    assert ledger_payload["worker"]["memory_hit_count"] >= 0
 
 
 def test_read_only_worker_success_completes_with_artifacts(tmp_path, monkeypatch):

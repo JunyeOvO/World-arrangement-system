@@ -157,6 +157,7 @@ class ConsoleQueries:
         approval = self._read_artifact_json(artifact_index, "approval.json")
         verify = self._read_artifact_json(artifact_index, "verify/verify.json")
         review = self._read_artifact_json(artifact_index, "review/review.json")
+        token_ledger = self._read_artifact_json(artifact_index, "token_ledger.json")
         return {
             "task": _with_runtime_liveness(task_summary(task), live_task_ids, task),
             "timeline": events,
@@ -164,6 +165,7 @@ class ConsoleQueries:
             "approval": approval,
             "verify": verify,
             "review": review,
+            "token_ledger": token_ledger,
             "metrics": metrics,
             "artifacts": artifact_listing(task_id, artifact_index),
         }

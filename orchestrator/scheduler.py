@@ -32,6 +32,7 @@ from .task_protocol import (
     normalize_task_protocol,
     verification_commands_for_policy,
 )
+from .token_ledger import write_task_token_ledger
 from .project_commands import (
     handle_confirm_project_profile,
     handle_discover_projects,
@@ -370,7 +371,7 @@ class OrchestratorService:
         task = self.db.get_task(task_id) or task
         index = self.artifacts.index(task_id)
         result: dict[str, Any] = {"task": task, "artifacts": index}
-        for key in ["final.md", "review/review.json", "verify/verify.json", "verify/diff.patch", "metrics.json", "multimodal/vision_observation.json", "result.json"]:
+        for key in ["final.md", "review/review.json", "verify/verify.json", "verify/diff.patch", "metrics.json", "token_ledger.json", "multimodal/vision_observation.json", "result.json"]:
             path = index.get(key)
             if path:
                 text = Path(path).read_text(encoding="utf-8", errors="replace")
@@ -395,6 +396,7 @@ class OrchestratorService:
                 "estimation_method": event.get("estimation_method"),
             },
         )
+        self._write_token_ledger(event["task_id"])
 
     def _record_review_codex_usage(
         self,
@@ -1350,6 +1352,7 @@ class OrchestratorService:
         write_metrics(metrics, run_dir / "attempts" / "01" / "metrics.json")
         write_metrics(metrics, run_dir / "metrics.json")
         self.db.upsert_task_metrics(metrics.to_dict())
+        self._write_token_ledger(task["task_id"])
         return True
 
     def _check_worker_declared_permissions(self, task_id: str, worker_name: str, task: dict[str, Any]) -> dict[str, Any]:
@@ -1404,6 +1407,13 @@ class OrchestratorService:
         write_metrics(metrics, metrics_path)
         write_metrics(metrics, Path(self.db.get_task(task_id)["run_dir"]) / "metrics.json")
         self.db.upsert_task_metrics(metrics.to_dict())
+        self._write_token_ledger(task_id)
+
+    def _write_token_ledger(self, task_id: str) -> None:
+        task = self.db.get_task(task_id)
+        if not task or not task.get("run_dir"):
+            return
+        write_task_token_ledger(self.db, task_id, Path(str(task["run_dir"])) / "token_ledger.json")
 
     def _reap_stale_worker_task(self, task: dict[str, Any]) -> None:
         status = str(task.get("status") or "")
