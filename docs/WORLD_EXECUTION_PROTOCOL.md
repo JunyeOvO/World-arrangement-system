@@ -37,10 +37,12 @@ Named profiles:
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
 | `quick_triage` | 6 | 2 | 6 | 90s | 2500 | Fast bounded checks. |
 | `code_contract_audit` | 10 | 4 | 10 | 150s | 4000 | Cross-file contracts and architecture/data-flow checks. |
-| `next_task_planning` | 12 | 4 | 10 | 150s | 4000 | Selecting next implementation candidates. |
+| `next_task_planning` | 14 | 5 | 14 | 210s | 4500 | Selecting next implementation candidates. |
 | `docs_review` | 6 | 2 | 6 | 90s | 3000 | README/docs onboarding and documentation gaps. |
 
 Explicit `read_budget.*` values override the selected profile for that task.
+
+For read-only tasks, World now instructs workers to emit a concise partial result before exhausting the read budget. If a worker still stops with `max_turns_no_diff` or `worker_no_diff`, the scheduler can salvage a meaningful assistant partial result as a read-only artifact instead of discarding the run.
 
 ## CLI Example
 

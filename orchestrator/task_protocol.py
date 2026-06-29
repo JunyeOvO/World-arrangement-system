@@ -22,11 +22,11 @@ READ_BUDGET_PROFILES = {
         "max_output_tokens": 4000,
     },
     "next_task_planning": {
-        "max_files": 12,
-        "max_dirs": 4,
-        "max_worker_turns": 10,
-        "max_duration_sec": 150,
-        "max_output_tokens": 4000,
+        "max_files": 14,
+        "max_dirs": 5,
+        "max_worker_turns": 14,
+        "max_duration_sec": 210,
+        "max_output_tokens": 4500,
     },
     "docs_review": {
         "max_files": 6,

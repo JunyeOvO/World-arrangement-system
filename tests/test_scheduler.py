@@ -225,7 +225,39 @@ def test_read_only_max_turns_with_text_can_finish_without_fallback(tmp_path):
         failure,
     )
 
-    assert summary == "Read-only audit completed."
+    assert summary == "Partial read-only result salvaged after worker budget limit.\n\nRead-only audit completed."
+
+
+def test_read_only_max_turns_with_partial_text_can_be_salvaged(tmp_path):
+    stream = tmp_path / "worker.jsonl"
+    partial = (
+        "## Summary\n\n"
+        "This read-only planning pass found three next candidates: tighten task status mapping, "
+        "add dashboard regression tests, and document the execution protocol. Risks are limited "
+        "because changed_files=[] and no project files were modified.\n\n"
+        "Next step: choose one bounded patch task."
+    )
+    stream.write_text(
+        json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": partial}]}}) + "\n",
+        encoding="utf-8",
+    )
+    result = WorkerResult(
+        status="failed",
+        summary="Claude Code worker failed",
+        changed_files=[],
+        stdout_path=str(stream),
+    )
+    failure = FailureClassification("max_turns_no_diff", True, "escalate_model_or_narrow_task")
+
+    summary = _read_only_failure_summary(
+        {"user_goal": "挑选下一轮 World 小修候选任务，只读，不修改文件。", "task_mode": "read_only", "expected_diff": False},
+        result,
+        failure,
+    )
+
+    assert summary is not None
+    assert summary.startswith("Partial read-only result salvaged")
+    assert "three next candidates" in summary
 
 
 def test_verifiable_path_wording_does_not_force_project_verification():
@@ -279,6 +311,7 @@ def test_opencode_prompt_embeds_context_without_external_artifact_paths(tmp_path
     assert "Verification policy: changed_files_only" in prompt
     assert "Read budget profile: code_contract_audit" in prompt
     assert '"max_files": 5' in prompt
+    assert "Read-only completion rule:" in prompt
     assert "Task JSON:" not in prompt
     assert "Route JSON:" not in prompt
 

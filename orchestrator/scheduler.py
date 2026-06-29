@@ -1634,6 +1634,53 @@ def _extract_worker_success_text(path: Path) -> str | None:
     return result_text
 
 
+def _extract_worker_partial_text(path: Path) -> str | None:
+    """Return the last meaningful assistant text from a read-only worker stream."""
+    text = _extract_worker_success_text(path)
+    if text and _looks_like_meaningful_read_only_output(text):
+        return text
+    return None
+
+
+def _looks_like_meaningful_read_only_output(text: str) -> bool:
+    stripped = text.strip()
+    lowered = stripped.lower()
+    completion_markers = ("completed", "finished", "done", "完成", "已完成")
+    if len(stripped) >= 20 and any(marker in lowered for marker in completion_markers):
+        return True
+    if len(stripped) < 120:
+        return False
+    exploratory_markers = (
+        "i'll inspect",
+        "i will inspect",
+        "let me inspect",
+        "let me check",
+        "i need to inspect",
+        "i'll read",
+        "i will read",
+        "先检查",
+        "先看",
+        "我先",
+    )
+    if any(marker in lowered for marker in exploratory_markers) and len(stripped) < 500:
+        return False
+    result_markers = (
+        "summary",
+        "overview",
+        "risk",
+        "recommend",
+        "next",
+        "changed_files",
+        "验收",
+        "结论",
+        "风险",
+        "建议",
+        "下一步",
+        "候选",
+    )
+    return any(marker in lowered for marker in result_markers)
+
+
 def _read_only_result_can_finish(task: dict[str, Any], worker_result: Any) -> bool:
     return (
         not _task_requires_diff(task)
@@ -1652,12 +1699,16 @@ def _read_only_failure_summary(
     if not failure or failure.failure_reason not in {"max_turns_no_diff", "worker_no_diff"}:
         return None
     stdout_path = getattr(worker_result, "stdout_path", None)
-    summary = _extract_worker_success_text(Path(str(stdout_path))) if stdout_path else None
+    summary = _extract_worker_partial_text(Path(str(stdout_path))) if stdout_path else None
     if summary:
-        return summary
+        return f"Partial read-only result salvaged after worker budget limit.\n\n{summary}"
     raw_summary = str(getattr(worker_result, "summary", "") or "").strip()
-    if raw_summary and raw_summary.lower() not in {"claude code worker failed", "opencode worker failed"}:
-        return raw_summary
+    if (
+        raw_summary
+        and raw_summary.lower() not in {"claude code worker failed", "opencode worker failed"}
+        and _looks_like_meaningful_read_only_output(raw_summary)
+    ):
+        return f"Partial read-only result salvaged after worker budget limit.\n\n{raw_summary}"
     return None
 
 
@@ -1995,6 +2046,13 @@ _CLAUDE_CODE_WORKER_PROMPT_PATH = code_root() / "prompts" / "claude_code_worker_
 
 def _worker_prompt(task: dict[str, Any], route: dict[str, Any]) -> str:
     worker = str(route.get("selected_worker", "")).lower()
+    read_only_completion_rule = ""
+    if not _task_requires_diff(task):
+        read_only_completion_rule = (
+            "Read-only completion rule: produce a concise partial result before the read budget is exhausted. "
+            "If you are near the turn or time limit, stop exploring and return the best current answer with "
+            "changed_files=[] instead of making more tool calls.\n"
+        )
     task_section = (
         f"\n\n## Task Context\n\n"
         f"Task: {task['user_goal']}\n"
@@ -2012,6 +2070,7 @@ def _worker_prompt(task: dict[str, Any], route: dict[str, Any]) -> str:
         "Do not read run artifacts outside the worktree; this prompt is the authoritative task context.\n"
         "World Core will run the listed verification commands after you return; do not spend many turns on full-suite testing.\n"
         "Respect the task mode, expected diff, verification policy, and read budget before exploring more files.\n"
+        f"{read_only_completion_rule}"
         "Return changed_files, summary, test_suggestions, risks, needs_user."
     )
     if task.get("vision_observation"):

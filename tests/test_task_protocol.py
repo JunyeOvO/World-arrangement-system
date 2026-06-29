@@ -46,6 +46,11 @@ def test_budget_profile_is_inferred_from_goal_shape():
 
     assert contract["read_budget_profile"] == "code_contract_audit"
     assert planning["read_budget_profile"] == "next_task_planning"
+    assert planning["read_budget"]["max_files"] == 14
+    assert planning["read_budget"]["max_dirs"] == 5
+    assert planning["read_budget"]["max_worker_turns"] == 14
+    assert planning["read_budget"]["max_duration_sec"] == 210
+    assert planning["read_budget"]["max_output_tokens"] == 4500
     assert docs["read_budget_profile"] == "docs_review"
 
 
