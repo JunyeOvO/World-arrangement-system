@@ -46,6 +46,10 @@ V2 adds:
 - `matched_rules`
 - `rejected_candidates`
 - `retry_chain`
+- `task_shape`
+- `budget_estimate_usd`
+- `budget_cap_usd`
+- `history_basis`
 
 ## Key Decisions
 
@@ -55,6 +59,33 @@ V2 adds:
 - Screenshot analysis routes to `claude code + Mimo V2.5`.
 - Screenshot-to-code routes to `claude code + Mimo V2.5 pro`.
 - Hard bugfix routes to OpenCodeWorker + GLM-5.2 `max`.
+
+## History-Aware Routing
+
+`plan_route(task, project, history=None)` accepts historical model metrics from
+`Database.model_metrics_summary()`. Each row should contain:
+
+- `model`
+- `worker`
+- `attempts`
+- `success_rate`
+- `avg_cost_usd`
+
+The router uses history as a bounded secondary signal, after safety gates and
+hard task rules:
+
+- Safety blocks, explicit GLM requests, multimodal requirements, and hard
+  bugfix rules still win over cost optimization.
+- Candidate scoring adds a small success/cost delta when the same worker/model
+  has enough prior evidence.
+- Router V3 uses `task_shape` to choose between allowed ClaudeCode models.
+  For docs and single-file targeted patches, strong low-cost flash history can
+  select `deepseek_flash`.
+- Poor flash history selects `deepseek_pro` even when flash is cheaper.
+- Very small sample history is intentionally weak and should not flip default
+  patch routes by itself.
+- The selected route explains the evidence through `history_basis` and the
+  `history_decision` fragment in `reason`.
 
 ## Test Coverage
 

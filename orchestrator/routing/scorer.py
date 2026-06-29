@@ -28,18 +28,22 @@ DEFAULT_WEIGHTS = {
 }
 
 
+MIN_HISTORY_ATTEMPTS = 3
+
+
 def score_candidates(
     candidates: list[CandidateRoute],
     task: dict[str, Any],
     project: dict[str, Any] | None,
     features: TaskFeatures,
     labels: TaskLabels,
-    history: list[dict[str, Any]] | None = None,
+    history: list[dict[str, Any]] | dict[str, Any] | None = None,
     weights: dict[str, float] | None = None,
 ) -> list[CandidateRoute]:
     """Score each candidate route against task features."""
     w = weights or DEFAULT_WEIGHTS
     project = project or {}
+    history_by_route, model_cost_floor = _normalize_history(history)
 
     for c in candidates:
         c.base_score = 0.0
@@ -135,8 +139,97 @@ def score_candidates(
             c.base_score += w.get("project_preference", 20)
             c.reasons.append(f"project default model: {c.model}")
 
+        # ── Historical cost/success signal ──
+        history_item = history_by_route.get((c.worker, c.model)) or history_by_route.get(("", c.model))
+        if history_item:
+            adjustment = _history_adjustment(history_item, model_cost_floor, w.get("history_success_rate", 20))
+            if adjustment:
+                c.base_score += adjustment
+                c.reasons.append(
+                    "history-aware route: "
+                    f"attempts={history_item.get('attempts')}, "
+                    f"success_rate={history_item.get('success_rate')}, "
+                    f"avg_cost={history_item.get('avg_cost')}, "
+                    f"score_delta={adjustment:+.1f}"
+                )
+
         c.score = c.base_score
 
     # Sort by score descending
     candidates.sort(key=lambda x: x.score, reverse=True)
     return candidates
+
+
+def _normalize_history(
+    history: list[dict[str, Any]] | dict[str, Any] | None,
+) -> tuple[dict[tuple[str, str], dict[str, Any]], float | None]:
+    rows: list[dict[str, Any]] = []
+    if not history:
+        return {}, None
+    if isinstance(history, dict):
+        for model, item in history.items():
+            if isinstance(item, dict):
+                row = dict(item)
+                row.setdefault("model", model)
+                rows.append(row)
+        if not rows and history.get("model"):
+            rows.append(history)
+    else:
+        rows = [row for row in history if isinstance(row, dict)]
+
+    result: dict[tuple[str, str], dict[str, Any]] = {}
+    costs: list[float] = []
+    for row in rows:
+        model = str(row.get("model") or "").strip()
+        if not model:
+            continue
+        worker = str(row.get("worker") or "").strip()
+        item = {
+            "worker": worker or None,
+            "model": model,
+            "attempts": _int_or_none(row.get("attempts")),
+            "success_rate": _float_or_none(row.get("success_rate")),
+            "avg_cost": _float_or_none(row.get("avg_cost_usd") if "avg_cost_usd" in row else row.get("avg_cost")),
+        }
+        if item["avg_cost"] is not None:
+            costs.append(float(item["avg_cost"]))
+        result[(worker, model)] = item
+        result.setdefault(("", model), item)
+    return result, min(costs) if costs else None
+
+
+def _history_adjustment(item: dict[str, Any], cost_floor: float | None, max_success_weight: float) -> float:
+    success_rate = _float_or_none(item.get("success_rate"))
+    if success_rate is None:
+        return 0.0
+    attempts = _int_or_none(item.get("attempts"))
+    if attempts is None:
+        evidence_weight = 0.5
+    elif attempts <= 0:
+        return 0.0
+    else:
+        evidence_weight = min(1.0, attempts / 10.0)
+        if attempts < MIN_HISTORY_ATTEMPTS:
+            evidence_weight *= 0.35
+
+    success_delta = (success_rate - 0.75) * max_success_weight * 2.0 * evidence_weight
+    cost_delta = 0.0
+    avg_cost = _float_or_none(item.get("avg_cost"))
+    if cost_floor is not None and avg_cost is not None and avg_cost > 0:
+        relative_over_floor = max(0.0, (avg_cost - cost_floor) / avg_cost)
+        cost_delta = -min(8.0, relative_over_floor * 10.0) * evidence_weight
+    return round(success_delta + cost_delta, 2)
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return None if value is None else float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return None if value is None else int(value)
+    except (TypeError, ValueError):
+        return None
