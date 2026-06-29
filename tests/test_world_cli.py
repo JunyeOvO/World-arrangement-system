@@ -2,6 +2,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import yaml
+
 from orchestrator.cli import main
 
 
@@ -54,3 +56,58 @@ def test_world_create_plan_cli_outputs_external_plan(tmp_path, monkeypatch, caps
     assert output["plan"]["route"]["selected_worker"] == "claude_code"
     assert Path(output["plan_path"]).exists()
     assert str(repo) not in output["plan_path"]
+
+
+def test_submit_task_cli_writes_explicit_protocol(tmp_path, monkeypatch, capsys):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    runtime = tmp_path / "ai-runtime"
+    runtime.mkdir()
+    monkeypatch.setenv("AI_ORCHESTRATOR_HOME", str(runtime))
+    (runtime / "projects.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "demo": {
+                        "repo": str(repo),
+                        "default_branch": "main",
+                        "test_commands": ["npm test", "npm run check"],
+                        "build_commands": ["npm run build"],
+                        "forbidden_paths": [".env"],
+                        "allow_auto_pr": False,
+                    }
+                }
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    code = main([
+        "submit-task",
+        "--project",
+        "demo",
+        "--goal",
+        "Find one bug and output a fix plan only",
+        "--no-execute",
+        "--task-mode",
+        "read_only",
+        "--expected-diff",
+        "false",
+        "--verification-policy",
+        "changed_files_only",
+        "--read-budget",
+        "max_files=5",
+        "--read-budget",
+        "max_worker_turns=4",
+    ])
+    output = json.loads(capsys.readouterr().out)
+    task = json.loads((Path(output["run_dir"]) / "task.json").read_text(encoding="utf-8"))
+
+    assert code == 0
+    assert task["task_mode"] == "read_only"
+    assert task["expected_diff"] is False
+    assert task["verification_policy"] == "changed_files_only"
+    assert task["read_budget"]["max_files"] == 5
+    assert task["read_budget"]["max_worker_turns"] == 4

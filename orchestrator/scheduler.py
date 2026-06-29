@@ -25,6 +25,11 @@ from .outcomes import derive_task_outcome, should_record_outcome
 from .permissions import check_write_paths
 from .pr import create_pr_or_patch
 from .project_registry import detect_project, load_projects
+from .task_protocol import (
+    apply_read_budget_to_route,
+    normalize_task_protocol,
+    verification_commands_for_policy,
+)
 from .project_commands import (
     handle_confirm_project_profile,
     handle_discover_projects,
@@ -206,11 +211,28 @@ class OrchestratorService:
         dry_run: bool = False,
         image_paths: list[str] | None = None,
         image_base64: list[str] | None = None,
+        task_mode: str | None = None,
+        expected_diff: bool | None = None,
+        verification_policy: str | None = None,
+        read_budget: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         match = detect_project(repo_path=repo_path or ".")
         if match.needs_user or not match.project_id:
             return {"status": "NEEDS_USER", "message": "project could not be detected", "match": match.__dict__}
-        return self.submit_task(match.project_id, user_goal, risk_level, auto_execute, auto_pr, dry_run, image_paths=image_paths, image_base64=image_base64)
+        return self.submit_task(
+            match.project_id,
+            user_goal,
+            risk_level,
+            auto_execute,
+            auto_pr,
+            dry_run,
+            image_paths=image_paths,
+            image_base64=image_base64,
+            task_mode=task_mode,
+            expected_diff=expected_diff,
+            verification_policy=verification_policy,
+            read_budget=read_budget,
+        )
 
     def submit_task(
         self,
@@ -225,6 +247,10 @@ class OrchestratorService:
         force_variant: str | None = None,
         image_paths: list[str] | None = None,
         image_base64: list[str] | None = None,
+        task_mode: str | None = None,
+        expected_diff: bool | None = None,
+        verification_policy: str | None = None,
+        read_budget: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         projects = load_projects()
         if project_id not in projects:
@@ -233,6 +259,13 @@ class OrchestratorService:
         task_id = new_task_id()
         run_dir = self.artifacts.run_dir(task_id)
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        protocol = normalize_task_protocol(
+            user_goal,
+            task_mode=task_mode,
+            expected_diff=expected_diff,
+            verification_policy=verification_policy,
+            read_budget=read_budget,
+        )
         task = {
             "task_id": task_id,
             "project_id": project_id,
@@ -251,6 +284,7 @@ class OrchestratorService:
             "forbidden_paths": project.get("forbidden_paths", []),
             "image_paths": image_paths or [],
             "image_base64": image_base64 or [],
+            **protocol,
         }
         if force_worker or force_model or force_variant:
             task["route_override"] = {
@@ -288,6 +322,10 @@ class OrchestratorService:
                     "force_model": force_model,
                     "force_variant": force_variant,
                     "has_images": bool(image_paths or image_base64),
+                    "task_mode": protocol["task_mode"],
+                    "expected_diff": protocol["expected_diff"],
+                    "verification_policy": protocol["verification_policy"],
+                    "read_budget": protocol["read_budget"],
                 },
                 output_payload={
                     "task_id": task_id,
@@ -609,6 +647,7 @@ class OrchestratorService:
             self._set_status(task_id, "AUTO_WITH_SUMMARY", "auto_with_summary", approval.to_dict())
 
         route = self._route_for_task(task, project)
+        route = apply_read_budget_to_route(route, task)
         self.artifacts.write_json(task_id, "route.json", route)
         self.db.update_task(
             task_id, route_worker=route["selected_worker"],
@@ -651,6 +690,7 @@ class OrchestratorService:
         last_attempt: dict[str, Any] | None = None
 
         for idx, attempt in enumerate(retry_chain):
+            attempt = apply_read_budget_to_route(attempt, task)
             attempt_dir = Path(task["run_dir"]) / "attempts" / f"{idx + 1:02d}"
             attempt_dir.mkdir(parents=True, exist_ok=True)
             attempt["attempt_no"] = idx + 1
@@ -941,8 +981,11 @@ class OrchestratorService:
 
         # ── Verify ──
         self._set_status(task_id, "VERIFYING", "verify_started", {})
-        test_commands = list(task.get("test_commands", []))
-        build_commands = list(task.get("build_commands", []))
+        test_commands, build_commands = verification_commands_for_policy(
+            str(task.get("verification_policy") or "full"),
+            list(task.get("test_commands", [])),
+            list(task.get("build_commands", [])),
+        )
         if _skip_project_verification_for_read_only_task(task, final_result):
             test_commands = []
             build_commands = []
@@ -1130,6 +1173,12 @@ class OrchestratorService:
                 _world_write_policy(project),
             )
             task_id = task["task_id"]
+            route = apply_read_budget_to_route(_apply_route_override(dict(plan_result["plan"]["route"]), task), task)
+            plan_result["plan"]["route"] = route
+            plan_result["plan"]["task_mode"] = task.get("task_mode")
+            plan_result["plan"]["expected_diff"] = task.get("expected_diff")
+            plan_result["plan"]["verification_policy"] = task.get("verification_policy")
+            plan_result["plan"]["read_budget"] = task.get("read_budget")
             self.artifacts.write_json(task_id, "world_plan.json", plan_result["plan"])
             self.artifacts.write_json(
                 task_id,
@@ -1139,7 +1188,7 @@ class OrchestratorService:
                     "runtime_store": plan_result["runtime_store"],
                 },
             )
-            return _apply_route_override(dict(plan_result["plan"]["route"]), task)
+            return route
         return _apply_route_override(plan_route(task, project, history=self.db.model_metrics_summary()).to_dict(), task)
 
     def _run_mimo_vision(self, task: dict[str, Any], dry_run: bool = False) -> dict[str, Any]:
@@ -1790,6 +1839,10 @@ _NON_RETRYABLE_FAILURES = {"forbidden_path", "dangerous_command", "secret_exposu
 def _task_requires_diff(task: dict[str, Any]) -> bool:
     goal = str(task.get("user_goal", "")).lower()
     task_type = str(task.get("task_type", "")).lower()
+    if task.get("expected_diff") is not None:
+        return bool(task.get("expected_diff"))
+    if str(task.get("task_mode") or "").lower() in {"read_only", "audit"}:
+        return False
     if task.get("allow_empty_diff") is True:
         return False
     explicit_no_write_markers = (
@@ -1903,6 +1956,11 @@ def _task_requests_project_verification(task: dict[str, Any]) -> bool:
 
 
 def _skip_project_verification_for_read_only_task(task: dict[str, Any], worker_result: Any) -> bool:
+    policy = str(task.get("verification_policy") or "").lower()
+    if policy in {"none", "changed_files_only"}:
+        return not getattr(worker_result, "changed_files", [])
+    if policy in {"unit", "full"}:
+        return False
     return (
         not _task_requires_diff(task)
         and not getattr(worker_result, "changed_files", [])
@@ -1940,8 +1998,13 @@ def _worker_prompt(task: dict[str, Any], route: dict[str, Any]) -> str:
         f"Test commands: {json.dumps(task.get('test_commands', []), ensure_ascii=False)}\n"
         f"Build commands: {json.dumps(task.get('build_commands', []), ensure_ascii=False)}\n"
         f"Forbidden paths: {json.dumps(task.get('forbidden_paths', []), ensure_ascii=False)}\n"
+        f"Task mode: {task.get('task_mode', 'patch')}\n"
+        f"Expected diff: {json.dumps(task.get('expected_diff', True), ensure_ascii=False)}\n"
+        f"Verification policy: {task.get('verification_policy', 'full')}\n"
+        f"Read budget: {json.dumps(task.get('read_budget', {}), ensure_ascii=False)}\n"
         "Do not read run artifacts outside the worktree; this prompt is the authoritative task context.\n"
         "World Core will run the listed verification commands after you return; do not spend many turns on full-suite testing.\n"
+        "Respect the task mode, expected diff, verification policy, and read budget before exploring more files.\n"
         "Return changed_files, summary, test_suggestions, risks, needs_user."
     )
     if task.get("vision_observation"):

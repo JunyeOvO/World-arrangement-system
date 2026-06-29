@@ -157,6 +157,8 @@ def test_edit_task_requires_diff():
     assert _task_requires_diff({"user_goal": "Find one bug and fix it", "task_type": "simple_bugfix"})
     assert not _task_requires_diff({"user_goal": "Analyze the repo", "task_type": "analysis"})
     assert not _task_requires_diff({"user_goal": "Find one bug and fix it", "allow_empty_diff": True})
+    assert not _task_requires_diff({"user_goal": "Find one bug and fix it", "expected_diff": False})
+    assert not _task_requires_diff({"user_goal": "Find one bug and fix it", "task_mode": "read_only"})
     assert not _task_requires_diff({
         "user_goal": "目标：简单评价 Travel_with_me 项目质量。约束：只做只读分析，不修改文件，返回项目质量评价。",
     })
@@ -183,6 +185,20 @@ def test_read_only_task_skips_project_verification_without_explicit_request():
 
     assert not _task_requests_project_verification(task)
     assert _skip_project_verification_for_read_only_task(task, Result())
+
+
+def test_explicit_unit_policy_overrides_read_only_skip():
+    class Result:
+        changed_files: list[str] = []
+
+    task = {
+        "user_goal": "只读分析项目质量",
+        "task_mode": "read_only",
+        "expected_diff": False,
+        "verification_policy": "unit",
+    }
+
+    assert not _skip_project_verification_for_read_only_task(task, Result())
 
 
 def test_read_only_max_turns_with_text_can_finish_without_fallback(tmp_path):
@@ -245,6 +261,10 @@ def test_opencode_prompt_embeds_context_without_external_artifact_paths(tmp_path
         "worktree_path": str(tmp_path / "worktree"),
         "risk_level": "medium",
         "forbidden_paths": [".env"],
+        "task_mode": "read_only",
+        "expected_diff": False,
+        "verification_policy": "changed_files_only",
+        "read_budget": {"max_files": 5, "max_worker_turns": 4},
     }
 
     prompt = _worker_prompt(task, {"selected_worker": "opencode", "selected_model": "opencode-go/glm-5.2"})
@@ -253,6 +273,10 @@ def test_opencode_prompt_embeds_context_without_external_artifact_paths(tmp_path
     assert "Do not read run artifacts outside the worktree" in prompt
     assert "Test commands:" in prompt
     assert "Build commands:" in prompt
+    assert "Task mode: read_only" in prompt
+    assert "Expected diff: false" in prompt
+    assert "Verification policy: changed_files_only" in prompt
+    assert '"max_files": 5' in prompt
     assert "Task JSON:" not in prompt
     assert "Route JSON:" not in prompt
 

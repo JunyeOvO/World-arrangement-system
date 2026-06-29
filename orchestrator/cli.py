@@ -47,6 +47,10 @@ def main(argv: list[str] | None = None) -> int:
     submit.add_argument("--variant", default=None, help="Force a capability/CLI variant for this task, e.g. high or max")
     submit.add_argument("--image-path", action="append", default=[], help="Local PNG/JPEG path for MiMo vision observation")
     submit.add_argument("--image-base64", action="append", default=[], help="Inline base64 PNG/JPEG or data URL for MiMo vision observation")
+    submit.add_argument("--task-mode", choices=["read_only", "patch", "test", "docs", "audit"], default=None)
+    submit.add_argument("--expected-diff", choices=["true", "false"], default=None)
+    submit.add_argument("--verification-policy", choices=["none", "changed_files_only", "unit", "full"], default=None)
+    submit.add_argument("--read-budget", action="append", default=[], help="Read budget entry as key=value, e.g. max_files=8")
     status = sub.add_parser("get-task-status")
     status.add_argument("--task-id", required=True)
     result = sub.add_parser("read-task-result")
@@ -96,6 +100,10 @@ def main(argv: list[str] | None = None) -> int:
                 args.variant,
                 args.image_path,
                 args.image_base64,
+                task_mode=args.task_mode,
+                expected_diff=_parse_optional_bool(args.expected_diff),
+                verification_policy=args.verification_policy,
+                read_budget=_parse_read_budget(args.read_budget),
             )
         )
     if args.cmd == "get-task-status":
@@ -126,6 +134,25 @@ def _print(payload: object) -> int:
     except UnicodeEncodeError:
         sys.stdout.buffer.write((text + "\n").encode("utf-8", errors="replace"))
     return 0
+
+
+def _parse_optional_bool(value: str | None) -> bool | None:
+    if value is None:
+        return None
+    return value.strip().lower() == "true"
+
+
+def _parse_read_budget(values: list[str]) -> dict[str, int]:
+    budget: dict[str, int] = {}
+    for item in values:
+        if "=" not in item:
+            continue
+        key, raw = item.split("=", 1)
+        try:
+            budget[key.strip()] = int(raw.strip())
+        except ValueError:
+            continue
+    return budget
 
 
 def _doctor() -> int:

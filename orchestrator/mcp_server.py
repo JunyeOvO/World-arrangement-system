@@ -53,6 +53,10 @@ def create_server():
         auto_pr: bool = False,
         image_paths: list[str] | None = None,
         image_base64: list[str] | None = None,
+        task_mode: str | None = None,
+        expected_diff: bool | None = None,
+        verification_policy: str | None = None,
+        read_budget: dict | None = None,
     ):
         return service.submit_task(
             project_id,
@@ -62,6 +66,10 @@ def create_server():
             auto_pr,
             image_paths=image_paths,
             image_base64=image_base64,
+            task_mode=task_mode,
+            expected_diff=expected_diff,
+            verification_policy=verification_policy,
+            read_budget=read_budget,
         )
 
     @mcp.tool()
@@ -73,6 +81,10 @@ def create_server():
         auto_pr: bool = False,
         image_paths: list[str] | None = None,
         image_base64: list[str] | None = None,
+        task_mode: str | None = None,
+        expected_diff: bool | None = None,
+        verification_policy: str | None = None,
+        read_budget: dict | None = None,
     ):
         return service.submit_current_project_task(
             user_goal,
@@ -82,6 +94,10 @@ def create_server():
             auto_pr,
             image_paths=image_paths,
             image_base64=image_base64,
+            task_mode=task_mode,
+            expected_diff=expected_diff,
+            verification_policy=verification_policy,
+            read_budget=read_budget,
         )
 
     @mcp.tool()

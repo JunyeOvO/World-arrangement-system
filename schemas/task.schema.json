@@ -12,6 +12,20 @@
     "allowed_paths": { "type": "array", "items": { "type": "string" } },
     "forbidden_paths": { "type": "array", "items": { "type": "string" } },
     "acceptance": { "type": "array", "items": { "type": "string" } },
+    "task_mode": { "type": "string", "enum": ["read_only", "patch", "test", "docs", "audit"] },
+    "expected_diff": { "type": "boolean" },
+    "verification_policy": { "type": "string", "enum": ["none", "changed_files_only", "unit", "full"] },
+    "read_budget": {
+      "type": "object",
+      "properties": {
+        "max_files": { "type": "integer", "minimum": 1 },
+        "max_dirs": { "type": "integer", "minimum": 1 },
+        "max_worker_turns": { "type": "integer", "minimum": 1 },
+        "max_duration_sec": { "type": "integer", "minimum": 1 },
+        "max_output_tokens": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
     "auto_execute": { "type": "boolean" },
     "auto_pr": { "type": "boolean" },
     "auto_merge": { "type": "boolean", "const": false },
@@ -20,4 +34,3 @@
     "updated_at": { "type": "string" }
   }
 }
-
