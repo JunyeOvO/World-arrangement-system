@@ -166,6 +166,51 @@ function EfficiencyPanel({ efficiency }: { efficiency: MetricsEfficiency | null 
               <MetricKpi label="Target cut" value={`${efficiency.codex.quota_goal.required_codex_reduction_pct.toFixed(1)}%`} icon={<Gauge size={18} />} />
               <MetricKpi label="Max Codex share" value={`${efficiency.codex.quota_goal.max_codex_share_pct.toFixed(1)}%`} icon={<Scale size={18} />} />
             </div>
+            <div className="baseline-comparison">
+              <div className="codex-budget-head">
+                <div>
+                  <h3>Baseline Comparison</h3>
+                  <p>{efficiency.baseline.note}</p>
+                </div>
+                <span>{baselineLabel(efficiency.baseline.claim_strength)}</span>
+              </div>
+              <div className="summary-kpis baseline-kpis">
+                <MetricKpi label="Baseline tasks" value={efficiency.baseline.tasks_with_baseline.toString()} icon={<Gauge size={18} />} />
+                <MetricKpi label="Measured" value={efficiency.baseline.measured_tasks.toString()} icon={<Scale size={18} />} />
+                <MetricKpi label="Estimated" value={efficiency.baseline.estimated_tasks.toString()} icon={<Clock3 size={18} />} />
+                <MetricKpi label="Baseline tokens" value={formatNumber(efficiency.baseline.baseline_total_tokens)} icon={<ChartColumn size={18} />} />
+                <MetricKpi label="World Codex tokens" value={formatNumber(efficiency.baseline.world_codex_total_tokens)} icon={<ChartColumn size={18} />} />
+                <MetricKpi label="Codex cut" value={`${efficiency.baseline.codex_reduction_pct.toFixed(1)}%`} icon={<Gauge size={18} />} />
+              </div>
+              {efficiency.baseline.rows.length > 0 && (
+                <div className="table-wrap baseline-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Task</th>
+                        <th>Strength</th>
+                        <th>Baseline</th>
+                        <th>World Codex</th>
+                        <th>Saved</th>
+                        <th>Cut</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {efficiency.baseline.rows.slice(0, 8).map((row) => (
+                        <tr key={row.task_id}>
+                          <td><code>{row.task_id}</code><small>{row.project_id || "unknown"}</small></td>
+                          <td>{row.status}<small>{row.baseline_kind || row.source || ""}</small></td>
+                          <td>{formatNumber(row.baseline_total_tokens)}</td>
+                          <td>{formatNumber(row.world_codex_total_tokens)}</td>
+                          <td>{formatNumber(row.codex_tokens_saved)}</td>
+                          <td>{row.codex_reduction_pct.toFixed(1)}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
           <div className="table-wrap efficiency-table">
             <table>
@@ -313,6 +358,12 @@ function formatDateTime(value: string) {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US").format(value);
+}
+
+function baselineLabel(value: string) {
+  if (value === "actual_codex_only_baseline") return "measured";
+  if (value === "replay_estimate_only") return "estimated";
+  return "no baseline";
 }
 
 function formatDuration(ms: number) {

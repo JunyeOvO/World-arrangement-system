@@ -31,6 +31,18 @@ baselines/task_baselines.jsonl
 
 The task `token_ledger.json` is refreshed after every baseline record.
 
+Console Metrics also exposes an aggregate comparison through:
+
+```text
+GET /api/metrics/efficiency
+```
+
+The response includes `baseline.tasks_with_baseline`, `measured_tasks`,
+`estimated_tasks`, `baseline_total_tokens`, `world_codex_total_tokens`,
+`codex_tokens_saved`, `codex_reduction_pct`, and a bounded `rows` preview.
+The Web Console Metrics page renders the same summary under
+`Baseline Comparison`.
+
 ## Modes
 
 `replay_estimate`

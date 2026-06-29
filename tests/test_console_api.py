@@ -625,6 +625,30 @@ def test_metrics_efficiency_reports_real_token_cost_and_reference_baseline(tmp_p
         "created_at": "2026-06-28T13:12:02Z",
         "metadata": {"measured": False, "review_mode": "codex"},
     })
+    service.db.record_task_baseline({
+        "task_id": "task_efficiency_low",
+        "baseline_kind": "codex_only_replay",
+        "source": "replay_estimate",
+        "input_tokens": 7000,
+        "output_tokens": 1000,
+        "total_tokens": 8000,
+        "actual_codex_used": False,
+        "estimation_method": "utf8_bytes_div_4",
+        "created_at": "2026-06-28T13:12:03Z",
+        "metadata": {},
+    })
+    service.db.record_task_baseline({
+        "task_id": "task_efficiency_high",
+        "baseline_kind": "codex_only_actual",
+        "source": "manual",
+        "input_tokens": 9000,
+        "output_tokens": 1000,
+        "total_tokens": 10000,
+        "actual_codex_used": True,
+        "estimation_method": "manual_actual",
+        "created_at": "2026-06-28T13:12:04Z",
+        "metadata": {},
+    })
     api = ConsoleAPI(service)  # type: ignore[arg-type]
 
     status, _, payload = api.handle_get("/api/metrics/efficiency")
@@ -647,6 +671,15 @@ def test_metrics_efficiency_reports_real_token_cost_and_reference_baseline(tmp_p
     assert payload["codex"]["actual_codex_event_count"] == 1
     assert payload["codex"]["quota_goal"]["target_multiplier"] == 3.5
     assert payload["codex"]["quota_goal"]["required_codex_reduction_pct"] == 71.43
+    assert payload["baseline"]["tasks_with_baseline"] == 2
+    assert payload["baseline"]["measured_tasks"] == 1
+    assert payload["baseline"]["estimated_tasks"] == 1
+    assert payload["baseline"]["baseline_total_tokens"] == 18000
+    assert payload["baseline"]["world_codex_total_tokens"] == 4000
+    assert payload["baseline"]["codex_tokens_saved"] == 14000
+    assert payload["baseline"]["codex_reduction_pct"] == 77.78
+    assert payload["baseline"]["claim_strength"] == "actual_codex_only_baseline"
+    assert payload["baseline"]["rows"][0]["status"] == "measured"
     assert payload["by_model"][0]["model"] == "Deepseek-V4-flash"
     assert payload["by_model"][0]["savings_usd"] == 1.8006
 

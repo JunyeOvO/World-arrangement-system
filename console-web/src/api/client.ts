@@ -124,6 +124,30 @@ export type MetricsEfficiency = {
       max_codex_share_pct: number;
     };
   };
+  baseline: {
+    tasks_with_baseline: number;
+    measured_tasks: number;
+    estimated_tasks: number;
+    baseline_total_tokens: number;
+    world_codex_total_tokens: number;
+    codex_tokens_saved: number;
+    codex_reduction_pct: number;
+    claim_strength: "actual_codex_only_baseline" | "replay_estimate_only" | "no_baseline" | string;
+    measured: boolean;
+    note: string;
+    rows: Array<{
+      task_id: string;
+      project_id?: string;
+      status: "measured" | "estimated" | string;
+      baseline_kind?: string;
+      source?: string;
+      baseline_total_tokens: number;
+      world_codex_total_tokens: number;
+      codex_tokens_saved: number;
+      codex_reduction_pct: number;
+      created_at?: string;
+    }>;
+  };
   by_model: Array<{
     worker: string;
     model: string;

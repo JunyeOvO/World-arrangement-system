@@ -286,7 +286,9 @@ class ConsoleQueries:
 
     def metrics_efficiency(self, reference_model: str = "opencode-go/glm-5.2") -> dict[str, Any]:
         rows = self._metric_rows()
+        tasks = self.db.list_tasks(limit=500)
         codex = _codex_usage_summary(self.db.list_codex_usage_events(limit=2000))
+        baseline = _baseline_comparison_summary(self.db, tasks)
         total_input = sum(_metric_int(row.get("input_tokens")) for row in rows)
         total_output = sum(_metric_int(row.get("output_tokens")) for row in rows)
         total_cache = sum(_metric_int(row.get("cache_read_input_tokens")) for row in rows)
@@ -358,10 +360,11 @@ class ConsoleQueries:
             "codex_token_savings_measured": False,
             "codex_token_savings_note": (
                 "Worker model tokens and costs are measured from task metrics. Codex planning/review "
-                "tokens are locally estimated because Codex quota telemetry is not exposed here. A "
-                "same-task no-World Codex baseline is still required before claiming measured Codex savings."
+                "tokens are locally estimated because Codex quota telemetry is not exposed here. Baseline "
+                "comparison is measured only when same-task Codex-only actual tokens are recorded."
             ),
             "codex": codex,
+            "baseline": baseline,
             "by_model": model_rows,
         }
 
@@ -613,6 +616,70 @@ def _codex_usage_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
             "required_codex_reduction_pct": round(required_reduction_pct, 2),
             "max_codex_share_pct": round(100 - required_reduction_pct, 2),
         },
+    }
+
+
+def _baseline_comparison_summary(db: TaskDB, tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    total_baseline_tokens = 0
+    total_world_codex_tokens = 0
+    measured = 0
+    estimated = 0
+    for task in tasks:
+        task_id = str(task.get("task_id") or "")
+        if not task_id:
+            continue
+        baselines = db.list_task_baselines(task_id, limit=10)
+        if not baselines:
+            continue
+        baseline = baselines[0]
+        baseline_tokens = _metric_int(baseline.get("total_tokens"))
+        events = db.list_codex_usage_events(task_id=task_id, limit=2000)
+        world_codex_tokens = sum(_metric_int(event.get("total_tokens")) for event in events)
+        saved = baseline_tokens - world_codex_tokens
+        reduction = round((saved / baseline_tokens) * 100, 2) if baseline_tokens > 0 else 0.0
+        actual = bool(baseline.get("actual_codex_used"))
+        measured += 1 if actual else 0
+        estimated += 0 if actual else 1
+        total_baseline_tokens += baseline_tokens
+        total_world_codex_tokens += world_codex_tokens
+        rows.append({
+            "task_id": task_id,
+            "project_id": task.get("project_id"),
+            "status": "measured" if actual else "estimated",
+            "baseline_kind": baseline.get("baseline_kind"),
+            "source": baseline.get("source"),
+            "baseline_total_tokens": baseline_tokens,
+            "world_codex_total_tokens": world_codex_tokens,
+            "codex_tokens_saved": saved,
+            "codex_reduction_pct": reduction,
+            "created_at": baseline.get("created_at"),
+        })
+    total_saved = total_baseline_tokens - total_world_codex_tokens
+    total_reduction = round((total_saved / total_baseline_tokens) * 100, 2) if total_baseline_tokens > 0 else 0.0
+    rows.sort(key=lambda row: (row["status"] != "measured", -int(row["codex_tokens_saved"]), str(row["task_id"])))
+    return {
+        "tasks_with_baseline": len(rows),
+        "measured_tasks": measured,
+        "estimated_tasks": estimated,
+        "baseline_total_tokens": total_baseline_tokens,
+        "world_codex_total_tokens": total_world_codex_tokens,
+        "codex_tokens_saved": total_saved,
+        "codex_reduction_pct": total_reduction,
+        "claim_strength": (
+            "actual_codex_only_baseline"
+            if measured
+            else "replay_estimate_only"
+            if estimated
+            else "no_baseline"
+        ),
+        "measured": measured > 0,
+        "note": (
+            "Measured tasks use recorded same-task Codex-only actual tokens. Estimated tasks use replay baselines and should not be treated as official quota savings."
+            if rows
+            else "No same-task no-World baseline records exist yet."
+        ),
+        "rows": rows[:20],
     }
 
 

@@ -317,7 +317,8 @@ small {
   overflow-wrap: anywhere;
 }
 
-.codex-budget {
+.codex-budget,
+.baseline-comparison {
   margin-top: 12px;
   border: 1px solid #d9e1ea;
   border-radius: 8px;
@@ -333,12 +334,14 @@ small {
   margin-bottom: 10px;
 }
 
-.codex-budget h3 {
+.codex-budget h3,
+.baseline-comparison h3 {
   margin: 0;
   font-size: 15px;
 }
 
-.codex-budget p {
+.codex-budget p,
+.baseline-comparison p {
   max-width: 900px;
   margin: 5px 0 0;
   color: #66758a;
@@ -361,9 +364,18 @@ small {
   grid-template-columns: repeat(3, minmax(160px, 1fr));
 }
 
-.codex-kpis .summary-kpi strong {
+.baseline-kpis {
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+}
+
+.codex-kpis .summary-kpi strong,
+.baseline-kpis .summary-kpi strong {
   font-size: 20px;
   overflow-wrap: anywhere;
+}
+
+.baseline-table {
+  margin-top: 12px;
 }
 
 .efficiency-table {
