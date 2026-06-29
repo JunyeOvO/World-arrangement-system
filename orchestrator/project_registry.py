@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-from .config import load_yaml, paths
+from .config import code_root, load_yaml, paths
 from .types import ProjectProfile
 
 
@@ -34,7 +34,61 @@ def load_projects() -> dict[str, dict[str, Any]]:
         value = dict(project or {})
         value.setdefault("project_id", project_id)
         projects[project_id] = value
+    _ensure_builtin_self_project(projects)
     return projects
+
+
+def _ensure_builtin_self_project(projects: dict[str, dict[str, Any]]) -> None:
+    root = code_root()
+    try:
+        root_resolved = root.resolve()
+    except OSError:
+        return
+    for project in projects.values():
+        repo_raw = project.get("repo")
+        if not repo_raw:
+            continue
+        try:
+            if Path(str(repo_raw)).expanduser().resolve() == root_resolved:
+                return
+        except OSError:
+            continue
+    projects["world_system"] = {
+        "project_id": "world_system",
+        "name": "World System",
+        "repo": str(root),
+        "default_branch": "main",
+        "pr_base_branch": "main",
+        "stack": ["python", "pytest", "cli", "console"],
+        "test_commands": ["uv run pytest"],
+        "build_commands": [],
+        "forbidden_paths": [
+            ".env",
+            ".env.*",
+            "**/.env",
+            "**/.env.*",
+            "profiles/*.env",
+            ".claude/settings.local.json",
+            ".pytest_cache/**",
+            ".venv/**",
+            "__pycache__/**",
+            "worker/**",
+            "runs/**",
+            "logs/**",
+            "deploy/prod/**",
+        ],
+        "default_worker": "claude_code",
+        "default_model": "deepseek_pro",
+        "default_variant": "default",
+        "allow_auto_pr": False,
+        "allow_remote_push": False,
+        "world": {
+            "enabled": True,
+            "write_policy": "zero_write",
+            "runtime_backend": "external-global",
+            "workers": "wsl_only",
+        },
+    }
 
 
 def load_full_registry() -> dict[str, Any]:
@@ -250,4 +304,3 @@ def _git_remote(path: Path) -> str | None:
 
 def _normalize_remote(remote: str) -> str:
     return remote.strip().removesuffix(".git").lower()
-
