@@ -2053,6 +2053,7 @@ def _worker_prompt(task: dict[str, Any], route: dict[str, Any]) -> str:
             "If you are near the turn or time limit, stop exploring and return the best current answer with "
             "changed_files=[] instead of making more tool calls.\n"
         )
+    profile_strategy = _worker_profile_strategy(task)
     task_section = (
         f"\n\n## Task Context\n\n"
         f"Task: {task['user_goal']}\n"
@@ -2071,6 +2072,7 @@ def _worker_prompt(task: dict[str, Any], route: dict[str, Any]) -> str:
         "World Core will run the listed verification commands after you return; do not spend many turns on full-suite testing.\n"
         "Respect the task mode, expected diff, verification policy, and read budget before exploring more files.\n"
         f"{read_only_completion_rule}"
+        f"{profile_strategy}"
         "Return changed_files, summary, test_suggestions, risks, needs_user."
     )
     if task.get("vision_observation"):
@@ -2093,6 +2095,82 @@ def _worker_prompt(task: dict[str, Any], route: dict[str, Any]) -> str:
         f"Route: {json.dumps(route, ensure_ascii=False)}\n"
         "Return changed_files, summary, test_suggestions, risks."
     )
+
+
+def _worker_profile_strategy(task: dict[str, Any]) -> str:
+    if str(task.get("read_budget_profile") or "") != "next_task_planning":
+        return ""
+    seed_context = _next_task_planning_seed_context(task)
+    return (
+        "Next-task planning strategy:\n"
+        "- Do not use Agent/subagent tools for this profile; keep reasoning in the current worker.\n"
+        "- Do not run shell commands for this profile; use the seed file list below and Read only.\n"
+        "- Read at most 6 files total.\n"
+        "- After the first plausible next task candidate is identified, stop broad exploration and draft the final result.\n"
+        "- The final summary may contain 1 to 3 candidates; one high-confidence candidate is better than timing out.\n"
+        "- Each candidate must include target files, acceptance criteria, risk, recommended model route, and changed_files=[].\n"
+        "- If evidence is incomplete, mark the candidate as partial and return status=partial or success with risks; do not continue searching.\n"
+        f"{seed_context}"
+    )
+
+
+def _next_task_planning_seed_context(task: dict[str, Any]) -> str:
+    worktree_raw = task.get("worktree_path") or task.get("repo_path")
+    if not worktree_raw:
+        return ""
+    worktree = Path(str(worktree_raw))
+    if not worktree.exists():
+        return ""
+    roots = ["README.md", "js", "server", "tests"]
+    files: list[Path] = []
+    for root in roots:
+        path = worktree / root
+        if path.is_file():
+            files.append(path)
+        elif path.is_dir():
+            for child in path.rglob("*"):
+                if child.is_file() and _is_seed_file(child):
+                    files.append(child)
+    if not files:
+        return ""
+    files = sorted(files, key=_seed_file_rank)[:24]
+    lines = ["\nSeed files World already selected; prefer these paths and do not list/search the repo:"]
+    for path in files:
+        try:
+            relative = path.relative_to(worktree).as_posix()
+        except ValueError:
+            continue
+        lines.append(f"- {relative}")
+    return "\n".join(lines) + "\n"
+
+
+def _is_seed_file(path: Path) -> bool:
+    if path.name.startswith("."):
+        return False
+    return path.suffix.lower() in {".js", ".mjs", ".cjs", ".ts", ".tsx", ".json", ".md", ".html", ".css"}
+
+
+def _seed_file_rank(path: Path) -> tuple[int, str]:
+    relative = path.as_posix().lower()
+    priority = 50
+    for index, marker in enumerate(
+        (
+            "readme.md",
+            "package.json",
+            "main",
+            "route",
+            "planner",
+            "work-area",
+            "map-3d",
+            "guide",
+            "test",
+            "spec",
+        )
+    ):
+        if marker in relative:
+            priority = index
+            break
+    return priority, relative
 
 
 def _dry_verify(task: dict[str, Any]):

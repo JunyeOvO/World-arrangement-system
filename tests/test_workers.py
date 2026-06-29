@@ -203,6 +203,44 @@ def test_claude_worker_uses_route_max_turns(monkeypatch, tmp_path):
     assert result.status == "success"
     idx = observed["args"].index("--max-turns")
     assert observed["args"][idx + 1] == "24"
+    assert "--allowedTools=Read,Edit,Bash" in observed["args"]
+
+
+def test_claude_worker_next_task_planning_uses_read_only_tool_policy(monkeypatch, tmp_path):
+    observed = {}
+
+    def _build_command(value, args, env_overrides=None, cwd=None):
+        observed["args"] = list(args)
+        return ["claude", *args]
+
+    def _success(*args, **kwargs):
+        return ManagedProcessResult(
+            returncode=0,
+            stdout_path=str(tmp_path / "worker" / "worker.stream.jsonl"),
+            stderr_path=str(tmp_path / "worker" / "stderr.log"),
+            status="succeeded",
+        )
+
+    monkeypatch.setattr("orchestrator.workers.claude_code_worker.command_available", lambda cmd: (True, cmd))
+    monkeypatch.setattr("orchestrator.workers.claude_code_worker.build_command", _build_command)
+    monkeypatch.setattr("orchestrator.workers.claude_code_worker.run_managed_process", _success)
+
+    worker = ClaudeCodeWorker()
+    task = {
+        "run_dir": str(tmp_path),
+        "task_id": "t_next_plan",
+        "test_commands": [],
+        "build_commands": [],
+        "task_mode": "read_only",
+        "expected_diff": False,
+        "read_budget_profile": "next_task_planning",
+    }
+    result = worker.run("prompt", tmp_path, {"selected_model": "deepseek_flash", "max_turns": 14}, task)
+
+    assert result.status == "success"
+    assert "--allowedTools=Read" in observed["args"]
+    assert "--disallowedTools=Agent,Task,Edit,Bash" in observed["args"]
+    assert "--allowedTools=Read,Edit,Bash" not in observed["args"]
 
 
 def test_claude_worker_summary_uses_stream_result_and_ignores_prompt_for_launch_permissions(monkeypatch, tmp_path):

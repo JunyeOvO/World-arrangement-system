@@ -44,6 +44,14 @@ Explicit `read_budget.*` values override the selected profile for that task.
 
 For read-only tasks, World now instructs workers to emit a concise partial result before exhausting the read budget. If a worker still stops with `max_turns_no_diff` or `worker_no_diff`, the scheduler can salvage a meaningful assistant partial result as a read-only artifact instead of discarding the run.
 
+`next_task_planning` has an additional convergence strategy because broad planning tasks can otherwise spend the whole worker budget searching:
+
+- no Agent/subagent tools; ClaudeCodeWorker enforces this with a read-only tool policy;
+- no shell commands; World injects a bounded seed file list into the prompt;
+- at most 6 file reads;
+- after the first plausible next-task candidate is found, draft the final result immediately;
+- returning 1 high-confidence candidate is acceptable when 3 candidates would risk timeout.
+
 ## CLI Example
 
 ```powershell

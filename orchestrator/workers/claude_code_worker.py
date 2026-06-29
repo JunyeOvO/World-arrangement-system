@@ -147,6 +147,19 @@ def _collect_worktree_patch(
     return changed_files, patch_file, rollback_notes, ownership_violations
 
 
+def _claude_tool_args(route: dict, task: dict) -> list[str]:
+    if (
+        str(task.get("read_budget_profile") or "") == "next_task_planning"
+        and str(task.get("task_mode") or "").lower() == "read_only"
+        and task.get("expected_diff") is False
+    ):
+        return [
+            "--allowedTools=Read",
+            "--disallowedTools=Agent,Task,Edit,Bash",
+        ]
+    return ["--allowedTools=Read,Edit,Bash"]
+
+
 def _extract_claude_stream_result(path: Path, limit: int = _SUMMARY_LIMIT) -> str | None:
     if not path.exists():
         return None
@@ -265,7 +278,7 @@ class ClaudeCodeWorker(Worker):
             "--no-session-persistence",
             "--permission-mode",
             "acceptEdits",
-            "--allowedTools=Read,Edit,Bash",
+            *_claude_tool_args(route, task),
             prompt,
         ]
         cmd = build_command(

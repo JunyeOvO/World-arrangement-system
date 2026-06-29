@@ -316,6 +316,59 @@ def test_opencode_prompt_embeds_context_without_external_artifact_paths(tmp_path
     assert "Route JSON:" not in prompt
 
 
+def test_next_task_planning_prompt_limits_search_and_requires_early_draft(tmp_path):
+    worktree = tmp_path / "worktree"
+    (worktree / "js").mkdir(parents=True)
+    (worktree / "tests").mkdir()
+    (worktree / "README.md").write_text("# Travel With Me\n", encoding="utf-8")
+    (worktree / "js" / "main.js").write_text("export function boot() {}\n", encoding="utf-8")
+    (worktree / "tests" / "main.test.js").write_text("test('x', () => {})\n", encoding="utf-8")
+    task = {
+        "user_goal": "挑选下一轮 World 小修候选任务，只读，不修改文件。",
+        "run_dir": str(tmp_path / "run"),
+        "worktree_path": str(worktree),
+        "risk_level": "low",
+        "forbidden_paths": [".env"],
+        "task_mode": "read_only",
+        "expected_diff": False,
+        "verification_policy": "changed_files_only",
+        "read_budget_profile": "next_task_planning",
+        "read_budget": {"max_files": 14, "max_dirs": 5, "max_worker_turns": 14},
+    }
+
+    prompt = _worker_prompt(task, {"selected_worker": "claude_code", "selected_model": "deepseek_flash"})
+
+    assert "Next-task planning strategy:" in prompt
+    assert "Do not use Agent/subagent tools" in prompt
+    assert "Do not run shell commands" in prompt
+    assert "Read at most 6 files total" in prompt
+    assert "After the first plausible next task candidate is identified" in prompt
+    assert "one high-confidence candidate is better than timing out" in prompt
+    assert "Seed files World already selected" in prompt
+    assert "- README.md" in prompt
+    assert "- js/main.js" in prompt
+
+
+def test_non_planning_profile_does_not_get_next_task_strategy(tmp_path):
+    task = {
+        "user_goal": "只读调查 3D workArea 数据契约风险",
+        "run_dir": str(tmp_path / "run"),
+        "worktree_path": str(tmp_path / "worktree"),
+        "risk_level": "low",
+        "forbidden_paths": [".env"],
+        "task_mode": "read_only",
+        "expected_diff": False,
+        "verification_policy": "changed_files_only",
+        "read_budget_profile": "code_contract_audit",
+        "read_budget": {"max_files": 10, "max_worker_turns": 10},
+    }
+
+    prompt = _worker_prompt(task, {"selected_worker": "claude_code", "selected_model": "deepseek_flash"})
+
+    assert "Next-task planning strategy:" not in prompt
+    assert "Do not use Agent/subagent tools" not in prompt
+
+
 def test_get_task_control_reads_control_files(tmp_path, monkeypatch):
     monkeypatch.setenv("AI_ORCHESTRATOR_HOME", str(tmp_path / "runtime"))
     service = OrchestratorService()
