@@ -129,3 +129,13 @@ Recommended acceptance for the next small run:
 - At least 7 / 8 completed or partial-completed.
 - 0 patch-style retry chains for read-only tasks.
 - 0 baseline metadata entries under `worktrees/`, `worker/`, `control/`, or `attempts/`.
+
+## Follow-Up Implemented
+
+The `next_task_planning` early-output discipline has been generalized to the other read-only profiles:
+
+- `quick_triage`: draft a provisional conclusion after at most 2 file reads.
+- `code_contract_audit`: draft a contract hypothesis after at most 3 file reads, then read only to confirm or reject it.
+- `docs_review`: draft a scorecard after at most 2 docs/config files.
+
+All three profiles now explicitly tell the worker to return a partial result with `changed_files=[]` instead of spending the final turns on more exploration.

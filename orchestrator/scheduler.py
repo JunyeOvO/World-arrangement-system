@@ -2289,7 +2289,35 @@ def _project_memory_section(task: dict[str, Any]) -> str:
 
 
 def _worker_profile_strategy(task: dict[str, Any]) -> str:
-    if str(task.get("read_budget_profile") or "") != "next_task_planning":
+    profile = str(task.get("read_budget_profile") or "").strip().lower()
+    if profile == "quick_triage":
+        return (
+            "Quick-triage early-output strategy:\n"
+            "- Do not use Agent/subagent tools for this profile; keep the task bounded in the current worker.\n"
+            "- Read at most 2 files before drafting a provisional result.\n"
+            "- After 2 file reads or one clear signal, stop broad exploration and write the best current conclusion.\n"
+            "- The result must include: conclusion, evidence files, key risks, next step, and changed_files=[].\n"
+            "- If evidence is incomplete, explicitly label the answer partial and return it instead of reading more files.\n"
+        )
+    if profile == "code_contract_audit":
+        return (
+            "Code-contract audit early-output strategy:\n"
+            "- Do not use Agent/subagent tools for this profile; inspect only the contract path needed for this task.\n"
+            "- Read at most 3 files before drafting a contract hypothesis.\n"
+            "- The first draft must include: suspected contract, producer, consumer, mismatch risk, evidence files, next file if needed, and changed_files=[].\n"
+            "- After the draft exists, read at most 2 additional files only to confirm or reject that hypothesis.\n"
+            "- If the budget is nearly exhausted, return the current hypothesis as a partial result with risks; do not continue searching.\n"
+        )
+    if profile == "docs_review":
+        return (
+            "Docs-review early-output strategy:\n"
+            "- Do not use Agent/subagent tools for this profile; keep the review to the most relevant docs/files.\n"
+            "- Read at most 2 docs or config files before drafting a scorecard.\n"
+            "- The scorecard must include: audience, missing setup/test/usage information, stale or risky claims, priority, and changed_files=[].\n"
+            "- After the scorecard exists, read at most 2 additional files only to validate high-priority gaps.\n"
+            "- If evidence is incomplete, return a partial scorecard with confidence and next checks instead of reading more files.\n"
+        )
+    if profile != "next_task_planning":
         return ""
     seed_context = _next_task_planning_seed_context(task)
     return (

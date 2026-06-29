@@ -391,7 +391,7 @@ def test_next_task_planning_prompt_limits_search_and_requires_early_draft(tmp_pa
     assert "bundle.js" not in prompt
 
 
-def test_non_planning_profile_does_not_get_next_task_strategy(tmp_path):
+def test_code_contract_profile_gets_early_output_strategy_not_next_task_seed(tmp_path):
     task = {
         "user_goal": "只读调查 3D workArea 数据契约风险",
         "run_dir": str(tmp_path / "run"),
@@ -408,7 +408,38 @@ def test_non_planning_profile_does_not_get_next_task_strategy(tmp_path):
     prompt = _worker_prompt(task, {"selected_worker": "claude_code", "selected_model": "deepseek_flash"})
 
     assert "Next-task planning strategy:" not in prompt
-    assert "Do not use Agent/subagent tools" not in prompt
+    assert "Seed files World already selected" not in prompt
+    assert "Code-contract audit early-output strategy:" in prompt
+    assert "Read at most 3 files before drafting a contract hypothesis" in prompt
+    assert "producer, consumer, mismatch risk" in prompt
+
+
+def test_quick_triage_and_docs_review_profiles_get_early_output_strategy(tmp_path):
+    base_task = {
+        "user_goal": "只读调查项目状态，不修改文件。",
+        "run_dir": str(tmp_path / "run"),
+        "worktree_path": str(tmp_path / "worktree"),
+        "risk_level": "low",
+        "forbidden_paths": [".env"],
+        "task_mode": "read_only",
+        "expected_diff": False,
+        "verification_policy": "changed_files_only",
+        "read_budget": {"max_files": 6, "max_worker_turns": 6},
+    }
+
+    quick_prompt = _worker_prompt(
+        {**base_task, "read_budget_profile": "quick_triage"},
+        {"selected_worker": "claude_code", "selected_model": "deepseek_flash"},
+    )
+    docs_prompt = _worker_prompt(
+        {**base_task, "read_budget_profile": "docs_review"},
+        {"selected_worker": "claude_code", "selected_model": "deepseek_flash"},
+    )
+
+    assert "Quick-triage early-output strategy:" in quick_prompt
+    assert "Read at most 2 files before drafting a provisional result" in quick_prompt
+    assert "Docs-review early-output strategy:" in docs_prompt
+    assert "Read at most 2 docs or config files before drafting a scorecard" in docs_prompt
 
 
 def test_get_task_control_reads_control_files(tmp_path, monkeypatch):
