@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .artifacts import ArtifactStore
+from .baselines import build_manual_baseline, build_replay_baseline
 from .codex_usage import build_codex_usage_event
 from .config import code_root, ensure_runtime_dirs
 from .constants import DEFAULT_CLAUDE_CMD, DEFAULT_OPENCODE_CMD
@@ -377,6 +378,56 @@ class OrchestratorService:
                 text = Path(path).read_text(encoding="utf-8", errors="replace")
                 result[key] = text[:20000]
         return result
+
+    def record_task_baseline(
+        self,
+        task_id: str,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        actual: bool = False,
+        baseline_kind: str | None = None,
+    ) -> dict[str, Any]:
+        task = self.db.get_task(task_id)
+        if not task:
+            return {"status": "NOT_FOUND", "task_id": task_id}
+        if input_tokens is not None or output_tokens is not None:
+            if input_tokens is None or output_tokens is None:
+                return {"status": "INVALID_REQUEST", "error": "input_tokens and output_tokens must be provided together"}
+            baseline = build_manual_baseline(
+                task_id=task_id,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                baseline_kind=baseline_kind or ("codex_only_actual" if actual else "codex_only_manual_estimate"),
+                actual_codex_used=actual,
+                metadata={"source": "cli_record_task_baseline"},
+            )
+        else:
+            baseline = build_replay_baseline(
+                task=task,
+                artifact_index=self.artifacts.index(task_id),
+                baseline_kind=baseline_kind or "codex_only_replay",
+            )
+        self.db.record_task_baseline(baseline)
+        self.artifacts.append_jsonl(task_id, "baselines/task_baselines.jsonl", baseline)
+        self.db.append_event(
+            task_id,
+            "task_baseline_recorded",
+            None,
+            None,
+            {
+                "baseline_kind": baseline.get("baseline_kind"),
+                "source": baseline.get("source"),
+                "total_tokens": baseline.get("total_tokens"),
+                "actual_codex_used": bool(baseline.get("actual_codex_used")),
+            },
+        )
+        self._write_token_ledger(task_id)
+        return {
+            "status": "BASELINE_RECORDED",
+            "task_id": task_id,
+            "baseline": baseline,
+            "token_ledger_path": str(Path(str(task["run_dir"])) / "token_ledger.json") if task.get("run_dir") else None,
+        }
 
     def _record_codex_usage(self, event: dict[str, Any]) -> None:
         self.db.record_codex_usage_event(event)

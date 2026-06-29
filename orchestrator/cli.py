@@ -73,6 +73,12 @@ def main(argv: list[str] | None = None) -> int:
     rollback = sub.add_parser("rollback-task")
     rollback.add_argument("--task-id", required=True, help="Task ID to rollback")
     rollback.add_argument("--no-cleanup", action="store_true", help="Keep worktree")
+    baseline = sub.add_parser("record-task-baseline")
+    baseline.add_argument("--task-id", required=True)
+    baseline.add_argument("--input-tokens", type=int, default=None)
+    baseline.add_argument("--output-tokens", type=int, default=None)
+    baseline.add_argument("--actual", action="store_true", help="Mark provided tokens as actual Codex-only usage")
+    baseline.add_argument("--baseline-kind", default=None)
     args = parser.parse_args(argv)
 
     service = OrchestratorService()
@@ -130,6 +136,16 @@ def main(argv: list[str] | None = None) -> int:
         result = service.rollback_task(args.task_id, cleanup_worktree=not args.no_cleanup)
         _print(result)
         return 0 if result.get("status") != "NOT_FOUND" else 1
+    if args.cmd == "record-task-baseline":
+        result = service.record_task_baseline(
+            args.task_id,
+            input_tokens=args.input_tokens,
+            output_tokens=args.output_tokens,
+            actual=args.actual,
+            baseline_kind=args.baseline_kind,
+        )
+        _print(result)
+        return 0 if result.get("status") != "NOT_FOUND" and result.get("status") != "INVALID_REQUEST" else 1
     return 2
 
 

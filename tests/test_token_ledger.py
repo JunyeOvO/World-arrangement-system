@@ -99,3 +99,22 @@ def test_write_task_token_ledger(tmp_path):
     assert payload["task_id"] == "task_2"
     assert payload["codex"]["event_count"] == 0
     assert payload["worker"]["attempts"] == 0
+
+
+def test_task_token_ledger_without_baseline_marks_counterfactual_unmeasured(tmp_path):
+    db = TaskDB(tmp_path / "world.db")
+    db.create_task({
+        "task_id": "task_3",
+        "project_id": "project_1",
+        "repo_path": str(tmp_path),
+        "user_goal": "inspect project",
+        "status": "QUEUED",
+        "created_at": "2026-06-29T01:00:00Z",
+        "updated_at": "2026-06-29T01:01:00Z",
+        "run_dir": str(tmp_path / "run"),
+    })
+
+    ledger = build_task_token_ledger(db, "task_3")
+
+    assert ledger["baselines"] == []
+    assert ledger["counterfactual"]["status"] == "not_measured"

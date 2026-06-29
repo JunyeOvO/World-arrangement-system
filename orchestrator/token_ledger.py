@@ -16,9 +16,11 @@ def build_task_token_ledger(db: TaskDB, task_id: str) -> dict[str, Any]:
     task = db.get_task(task_id) or {"task_id": task_id}
     metrics = db.list_task_metrics(task_id)
     codex_events = list(reversed(db.list_codex_usage_events(task_id=task_id, limit=2000)))
+    baselines = db.list_task_baselines(task_id)
 
     codex = _codex_section(codex_events)
     worker = _worker_section(metrics)
+    counterfactual = _counterfactual_section(codex, baselines)
     combined_total = codex["total_tokens"] + worker["total_tokens"]
     codex_share_pct = round((codex["total_tokens"] / combined_total) * 100, 2) if combined_total else 0.0
 
@@ -53,13 +55,8 @@ def build_task_token_ledger(db: TaskDB, task_id: str) -> dict[str, Any]:
             "memory_miss_count": worker["memory_miss_count"],
             "cache_read_input_tokens": worker["cache_read_input_tokens"],
         },
-        "counterfactual": {
-            "status": "not_measured",
-            "reason": (
-                "A same-task no-World Codex baseline is required before claiming measured "
-                "Codex quota savings."
-            ),
-        },
+        "baselines": baselines,
+        "counterfactual": counterfactual,
     }
 
 
@@ -161,6 +158,39 @@ def _worker_section(metrics: list[dict[str, Any]]) -> dict[str, Any]:
         "memory_hit_count": sum(_int(row.get("memory_hit_count")) for row in metrics),
         "memory_miss_count": sum(_int(row.get("memory_miss_count")) for row in metrics),
         "models": model_rows,
+    }
+
+
+def _counterfactual_section(codex: dict[str, Any], baselines: list[dict[str, Any]]) -> dict[str, Any]:
+    if not baselines:
+        return {
+            "status": "not_measured",
+            "reason": (
+                "A same-task no-World Codex baseline is required before claiming measured "
+                "Codex quota savings."
+            ),
+        }
+    baseline = baselines[0]
+    baseline_total = _int(baseline.get("total_tokens"))
+    world_codex_total = _int(codex.get("total_tokens"))
+    saved_tokens = baseline_total - world_codex_total
+    reduction_pct = round((saved_tokens / baseline_total) * 100, 2) if baseline_total > 0 else 0.0
+    actual = bool(baseline.get("actual_codex_used"))
+    return {
+        "status": "measured" if actual else "estimated",
+        "baseline_kind": baseline.get("baseline_kind"),
+        "baseline_source": baseline.get("source"),
+        "baseline_estimation_method": baseline.get("estimation_method"),
+        "baseline_total_tokens": baseline_total,
+        "world_codex_total_tokens": world_codex_total,
+        "codex_tokens_saved": saved_tokens,
+        "codex_reduction_pct": reduction_pct,
+        "claim_strength": "actual_codex_only_baseline" if actual else "replay_estimate_only",
+        "reason": (
+            "Actual same-task Codex-only tokens were recorded."
+            if actual
+            else "Replay estimate is useful for trend analysis but is not measured Codex quota usage."
+        ),
     }
 
 

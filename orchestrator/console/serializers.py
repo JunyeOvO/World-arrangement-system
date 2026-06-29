@@ -17,6 +17,7 @@ PUBLIC_ARTIFACTS = {
     "verify/diff.patch",
     "metrics.json",
     "token_ledger.json",
+    "baselines/task_baselines.jsonl",
     "route.json",
     "approval.json",
     "approval_explanation.md",

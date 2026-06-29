@@ -78,13 +78,45 @@ Summarizes the values needed for quota-saving analysis:
 - memory hit/miss count
 - cache-read input tokens
 
+### `baselines`
+
+Stores same-task no-World baseline records.
+
+Baseline records are written by:
+
+```text
+uv run ai-dispatcher record-task-baseline --task-id <task_id>
+```
+
+When no token values are provided, World creates a `codex_only_replay`
+estimate from the task's stored artifacts. This is useful for trend analysis
+but is not measured Codex quota usage.
+
+When actual Codex-only token usage is available from a manual control run, use:
+
+```text
+uv run ai-dispatcher record-task-baseline \
+  --task-id <task_id> \
+  --input-tokens <n> \
+  --output-tokens <n> \
+  --actual
+```
+
+Actual baselines are preferred over replay estimates in the ledger.
+
 ### `counterfactual`
 
-v1 explicitly marks the no-World baseline as `not_measured`.
+When there is no baseline, v1 marks the no-World comparison as
+`not_measured`.
 
 Before claiming measured Codex savings, run a same-task control where Codex
 performs planning, implementation, and review without World delegation, then
 compare the same task category and acceptance result.
+
+When a replay estimate exists, `counterfactual.status` is `estimated`.
+
+When actual same-task Codex-only token usage exists, `counterfactual.status` is
+`measured`.
 
 ## Trust Boundary
 
@@ -99,10 +131,10 @@ Not trusted as final proof:
 
 - Codex planning/review token estimates as exact quota usage
 - savings percentage without a same-task no-World control
+- replay baselines as measured Codex quota reduction
 - adapter-reported USD cost when backend pricing is available
 
 ## Next Step
 
-The next P0 improvement is a baseline runner that stores matched no-World
-Codex control samples in the same ledger format. That will let Console show
-measured Codex reduction instead of the current evidence-only view.
+The next improvement is to surface baseline comparison in Console Metrics so
+sample runs can be reviewed without opening raw `token_ledger.json` artifacts.

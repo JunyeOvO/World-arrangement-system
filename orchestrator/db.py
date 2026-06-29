@@ -85,6 +85,20 @@ CREATE TABLE IF NOT EXISTS codex_usage_events (
   metadata_json TEXT
 );
 
+CREATE TABLE IF NOT EXISTS task_baselines (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL,
+  baseline_kind TEXT NOT NULL,
+  source TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL,
+  output_tokens INTEGER NOT NULL,
+  total_tokens INTEGER NOT NULL,
+  actual_codex_used BOOLEAN NOT NULL,
+  estimation_method TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  metadata_json TEXT
+);
+
 CREATE TABLE IF NOT EXISTS task_outcomes (
   task_id TEXT PRIMARY KEY,
   project_id TEXT,
@@ -436,6 +450,64 @@ class TaskDB:
                 item["metadata"] = json.loads(raw_metadata or "{}")
             except json.JSONDecodeError:
                 item["metadata"] = {}
+            item["actual_codex_used"] = bool(item.get("actual_codex_used"))
+            result.append(item)
+        return result
+
+    def record_task_baseline(self, row: dict[str, Any]) -> None:
+        self.init()
+        cols = [
+            "task_id",
+            "baseline_kind",
+            "source",
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "actual_codex_used",
+            "estimation_method",
+            "created_at",
+            "metadata_json",
+        ]
+        values = [
+            row.get("task_id"),
+            row.get("baseline_kind"),
+            row.get("source", "manual"),
+            int(row.get("input_tokens") or 0),
+            int(row.get("output_tokens") or 0),
+            int(row.get("total_tokens") or 0),
+            bool(row.get("actual_codex_used")),
+            row.get("estimation_method"),
+            row.get("created_at"),
+            json.dumps(_json_safe(row.get("metadata") or row.get("metadata_json") or {}), ensure_ascii=False),
+        ]
+        with self.connect() as con:
+            con.execute(
+                f"INSERT INTO task_baselines ({','.join(cols)}) VALUES ({','.join(['?'] * len(cols))})",
+                values,
+            )
+
+    def list_task_baselines(self, task_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        self.init()
+        limit = max(1, min(int(limit), 200))
+        with self.connect() as con:
+            rows = con.execute(
+                """
+                SELECT * FROM task_baselines
+                WHERE task_id=?
+                ORDER BY actual_codex_used DESC, created_at DESC, id DESC
+                LIMIT ?
+                """,
+                [task_id, limit],
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            raw_metadata = item.pop("metadata_json", None)
+            try:
+                item["metadata"] = json.loads(raw_metadata or "{}")
+            except json.JSONDecodeError:
+                item["metadata"] = {}
+            item["actual_codex_used"] = bool(item.get("actual_codex_used"))
             result.append(item)
         return result
 
