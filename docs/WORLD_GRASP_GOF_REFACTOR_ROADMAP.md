@@ -231,6 +231,23 @@ Pattern mapping:
 
 This removes another large tail section from `_execute` and puts the build/test gate behind a direct test boundary.
 
+## Slice 12 Implemented: Task Review Runner
+
+Moved Codex review input construction, review invocation, Codex usage recording, degraded-review blocking,
+and review failure classification into `orchestrator/task_review.py`.
+
+New ownership:
+
+- `scheduler.py`: starts the CODEX_REVIEWING phase and applies the returned review outcome.
+- `task_review.py`: builds review inputs, runs the review adapter, records Codex usage through an injected callback, and classifies review outcomes.
+
+Pattern mapping:
+
+- `TaskReviewRunner`: Facade over review gate execution and telemetry recording.
+- `TaskReviewOutcome`: explicit result object for scheduler decisions.
+
+This further separates review policy from workflow transition handling.
+
 ## Verification
 
 Targeted tests:
@@ -279,7 +296,11 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
 
 4b. **Task verification runner**
    - Implemented in `orchestrator/task_verification.py`.
-   - Next: extract review and publish tail into separate services.
+   - Next: extract publish tail into a separate service.
+
+4c. **Task review runner**
+   - Implemented in `orchestrator/task_review.py`.
+   - Next: extract publish tail and policy-learning recording.
 
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.

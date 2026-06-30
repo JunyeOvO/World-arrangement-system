@@ -55,6 +55,7 @@ from .task_routing import (
     world_write_policy as _world_write_policy,
 )
 from .task_result_document import build_final_markdown as _final_md
+from .task_review import TaskReviewRunner
 from .task_verification import TaskVerificationRunner
 from .verifier import verify, write_verify_result
 from .agents_md import inject_agents_md
@@ -115,6 +116,10 @@ class OrchestratorService:
             artifacts=self.artifacts,
             verify_func=verify,
             dry_verify_func=_dry_verify,
+        )
+        self.review_runner = TaskReviewRunner(
+            review_func=run_codex_review,
+            record_codex_usage=self._record_review_codex_usage,
         )
 
     def list_projects(self, query: str | None = None) -> dict[str, Any]:
@@ -1069,18 +1074,17 @@ class OrchestratorService:
 
         # ── Review ──
         self._set_status(task_id, "CODEX_REVIEWING", "review_started", {})
-        review_inputs = {
-            "task_id": task_id,
-            "risk_level": task["risk_level"],
-            "dry_run": dry_run,
-            "tests_passed": verify_result.tests_passed,
-            "forbidden_paths_touched": not forbidden.allowed,
-            "changed_files": verify_result.changed_files,
-        }
-        review = run_codex_review(review_inputs, Path(task["run_dir"]) / "review" / "review.json")
-        self._record_review_codex_usage(task_id, review_inputs, review)
-        if _review_degraded_blocks_publish(task, review):
-            failure = classify_review_failure({**review, "available": False})
+        review_outcome = self.review_runner.run(
+            task_id=task_id,
+            task=task,
+            verify_result=verify_result,
+            forbidden=forbidden,
+            dry_run=dry_run,
+        )
+        review = review_outcome.review
+        if review_outcome.degraded_blocks_publish:
+            failure = review_outcome.failure
+            assert failure is not None
             if last_attempt:
                 self._write_attempt_metrics(
                     task_id,
@@ -1096,8 +1100,9 @@ class OrchestratorService:
                              {"failure_reason": failure.failure_reason, "failure": failure.to_dict(), "review": review})
             self._record_policy_learning(task, project, success=False, worker=route["selected_worker"], model=route["selected_model"])
             return
-        if not review.get("approved"):
-            failure = classify_review_failure(review)
+        if not review_outcome.passed:
+            failure = review_outcome.failure
+            assert failure is not None
             if last_attempt:
                 self._write_attempt_metrics(
                     task_id,
@@ -1423,12 +1428,6 @@ class OrchestratorService:
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-def _review_degraded_blocks_publish(task: dict[str, Any], review: dict[str, Any]) -> bool:
-    if not review.get("degraded"):
-        return False
-    return str(task.get("risk_level", "medium")).lower() in {"medium", "high", "max"}
 
 
 def _project_registration_health(project: dict[str, Any] | None, requested_repo_path: str | None = None) -> dict[str, Any]:
