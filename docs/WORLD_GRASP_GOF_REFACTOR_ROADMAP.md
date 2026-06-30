@@ -398,6 +398,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_task_submission.py`.
    - Next: consider extracting current-project detection and submit facade if `submit_current_project_task` grows more policy.
 
+4m. **Approval policy service**
+   - Implemented in `orchestrator/approval_policy_service.py`.
+   - Owns dynamic approval decisions, learned-rule listing/revocation, policy suggestion actions, approval explanations, and user approval/rejection outcome recording.
+   - Patterns: Facade over `ApprovalGraph` / `ApprovalMemory` / `PolicyUpdateEngine`, Information Expert for approval-policy persistence and explanations.
+   - Scheduler now preserves the public CLI/MCP methods and execution-state transitions, but delegates approval-policy details to the service.
+   - Tests: `tests/test_approval_policy_service.py` plus existing dynamic approval and scheduler coverage.
+   - Next: extract `_execute` risk/approval gate into a small execution-phase object once route/run/verify tail has fewer direct scheduler dependencies.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.

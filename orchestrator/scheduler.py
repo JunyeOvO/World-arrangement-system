@@ -56,12 +56,10 @@ from .task_verification import TaskVerificationRunner
 from .verifier import verify
 from .agents_md import inject_agents_md
 from .worktree import prepare_worktree
-from .approval_graph import ApprovalGraph, ApprovalMode, _classify_task_type
-from .approval_memory import ApprovalMemory
-from .approval_explainer import explain_decision
+from .approval_graph import ApprovalMode
+from .approval_policy_service import ApprovalPolicyService
 from .attempt_recording import AttemptMetricsRecorder
 from .policy_learning import PolicyLearningRecorder
-from .policy_update_engine import PolicyUpdateEngine
 from .post_attempt_policy import decide_post_attempt
 from .process_control import request_cancel
 from .worker_permission_audit import WorkerPermissionAuditor
@@ -155,6 +153,7 @@ class OrchestratorService:
             task_requires_diff=_task_requires_diff,
         )
         self.policy_learning = PolicyLearningRecorder(self.db)
+        self.approval_policy = ApprovalPolicyService(self.db)
 
     def list_projects(self, query: str | None = None) -> dict[str, Any]:
         projects = load_projects()
@@ -453,65 +452,50 @@ class OrchestratorService:
 
     def get_approval_decision(self, project_id: str, user_goal: str, risk_level: str = "medium") -> dict[str, Any]:
         """Get the approval decision for a potential task without submitting it."""
-        graph = ApprovalGraph(self.db)
-        task = {"user_goal": user_goal, "risk_level": risk_level, "project_id": project_id}
-        decision = graph.decide(task)
-        return {"decision": decision.to_dict(), "explanation": explain_decision(decision, task)}
+        return self.approval_policy.decision_for_goal(project_id, user_goal, risk_level)
 
     def approve_task(self, task_id: str, user: str = "codex") -> dict[str, Any]:
         """User approves a task awaiting approval."""
         task = self.db.get_task(task_id)
         if not task:
             return {"status": "NOT_FOUND", "task_id": task_id}
-        self._record_user_decision(task, "approved")
-        return {"status": "approved", "task_id": task_id}
+        return self.approval_policy.approve_task(task, user=user)
 
     def reject_task(self, task_id: str, reason: str = "") -> dict[str, Any]:
         """User rejects a task awaiting approval."""
         task = self.db.get_task(task_id)
         if not task:
             return {"status": "NOT_FOUND", "task_id": task_id}
-        self._record_user_decision(task, "rejected", reason)
+        result = self.approval_policy.reject_task(task, reason)
         self.cancel_task(task_id, reason=f"User rejected: {reason}")
-        return {"status": "rejected", "task_id": task_id}
+        return result
 
     def list_learned_rules(self, project_id: str) -> dict[str, Any]:
         """List learned approval rules for a project."""
-        mem = ApprovalMemory(self.db)
-        rules = mem.get_learned_rules(project_id)
-        from .approval_explainer import explain_learned_rules
-        return {"rules": rules, "summary": explain_learned_rules(rules)}
+        return self.approval_policy.list_learned_rules(project_id)
 
     def revoke_learned_rule(self, pattern_id: int) -> dict[str, Any]:
         """Revoke (deactivate) a learned approval rule."""
-        mem = ApprovalMemory(self.db)
-        mem.revoke_rule(pattern_id)
-        return {"status": "revoked", "pattern_id": pattern_id}
+        return self.approval_policy.revoke_learned_rule(pattern_id)
 
     def explain_approval(self, task_id: str) -> dict[str, Any]:
         """Explain the approval decision for an existing task."""
         task = self.db.get_task(task_id)
         if not task:
             return {"status": "NOT_FOUND", "task_id": task_id}
-        graph = ApprovalGraph(self.db)
-        decision = graph.decide(task)
-        return {"decision": decision.to_dict(), "explanation": explain_decision(decision, task)}
+        return self.approval_policy.explain_task_approval(task)
 
     def list_policy_suggestions(self, project_id: str) -> dict[str, Any]:
         """List pending policy suggestions for a project."""
-        engine = PolicyUpdateEngine(self.db)
-        suggestions = engine.generate_suggestions(project_id)
-        return {"suggestions": suggestions, "count": len(suggestions)}
+        return self.approval_policy.list_policy_suggestions(project_id)
 
     def approve_policy_suggestion(self, suggestion_id: int) -> dict[str, Any]:
         """Approve a policy suggestion and create a matching override."""
-        engine = PolicyUpdateEngine(self.db)
-        return engine.approve_suggestion(suggestion_id, user="codex")
+        return self.approval_policy.approve_policy_suggestion(suggestion_id, user="codex")
 
     def reject_policy_suggestion(self, suggestion_id: int) -> dict[str, Any]:
         """Reject a policy suggestion."""
-        engine = PolicyUpdateEngine(self.db)
-        return engine.reject_suggestion(suggestion_id)
+        return self.approval_policy.reject_policy_suggestion(suggestion_id)
 
     # ── Adaptive Project Layer methods ──
 
@@ -547,22 +531,9 @@ class OrchestratorService:
         """Add a project path to the ignore list."""
         return handle_ignore_project(repo_path, reason)
 
-    def _record_user_decision(self, task: dict[str, Any], decision: str, feedback: str = "") -> None:
-        """Record a user's approve/reject decision for learning."""
-        mem = ApprovalMemory(self.db)
-        mem.record_outcome(
-            task_id=task["task_id"],
-            project_id=task.get("project_id", ""),
-            task_type=task.get("task_type", _classify_task_type(task.get("user_goal", ""), {})),
-            risk_level=task.get("risk_level", "medium"),
-            approval_mode="HARD_APPROVAL",
-            user_decision=decision,
-            user_feedback=feedback,
-        )
-
     def _execute(self, task: dict[str, Any], project: dict[str, Any], dry_run: bool = False) -> None:
         task_id = task["task_id"]
-        task["task_type"] = _classify_task_type(task["user_goal"], project)
+        task["task_type"] = self.approval_policy.classify_task_type(task["user_goal"], project)
 
         # ── Static risk check ──
         risk = evaluate_task(task["user_goal"], task["risk_level"], task["auto_pr"], task["auto_merge"])
@@ -573,8 +544,7 @@ class OrchestratorService:
             return
 
         # ── Dynamic Approval Graph ──
-        graph = ApprovalGraph(self.db)
-        approval = graph.decide(task, project)
+        approval = self.approval_policy.decide(task, project)
         self.artifacts.write_json(task_id, "approval.json", approval.to_dict())
         self._set_status(task_id, "CLASSIFIED", "classified", {"task_type": task["task_type"]})
 
@@ -586,7 +556,7 @@ class OrchestratorService:
 
         if approval.mode == ApprovalMode.HARD_APPROVAL:
             self._set_status(task_id, "HARD_APPROVAL_WAITING", "awaiting_hard_approval", approval.to_dict())
-            self.artifacts.write_text(task_id, "approval_explanation.md", explain_decision(approval, task))
+            self.artifacts.write_text(task_id, "approval_explanation.md", self.approval_policy.explain(approval, task))
             return
         elif approval.mode == ApprovalMode.SOFT_APPROVAL:
             self._set_status(task_id, "SOFT_APPROVAL_WAITING", "awaiting_soft_approval", approval.to_dict())
