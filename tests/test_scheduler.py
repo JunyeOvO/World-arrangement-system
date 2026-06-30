@@ -792,7 +792,7 @@ def test_scheduler_permission_diff_check_writes_audit_event(tmp_path, monkeypatc
         "run_dir": str(tmp_path / "run"),
     })
 
-    review = service._check_worker_diff_permissions("t_perm", "claude_code", [".env"])
+    review = service.execution_callbacks.check_worker_diff_permissions("t_perm", "claude_code", [".env"])
     events = service.db.list_events("t_perm")
 
     assert review["allowed"] is False
@@ -819,7 +819,7 @@ def test_scheduler_permission_preflight_requires_approval_for_prod(tmp_path, mon
         "run_dir": str(tmp_path / "run"),
     })
 
-    review = service._check_worker_declared_permissions(
+    review = service.execution_callbacks.check_worker_declared_permissions(
         "t_prod",
         "opencode",
         {"target_paths": ["infra/prod/main.tf"]},

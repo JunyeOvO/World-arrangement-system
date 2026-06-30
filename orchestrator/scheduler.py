@@ -9,6 +9,7 @@ from .artifacts import ArtifactStore
 from .codex_usage_recording import CodexUsageRecorder
 from .config import ensure_runtime_dirs
 from .db import TaskDB
+from .execution_callbacks import ExecutionCallbackAdapter
 from .pr import create_pr_or_patch
 from .current_project_task_service import CurrentProjectTaskService
 from .project_command_service import ProjectCommandService
@@ -90,15 +91,28 @@ class OrchestratorService:
             model_metrics_summary=self.db.model_metrics_summary,
             world_plan_factory=self.world_create_plan,
         )
-        self.preparation = TaskPreparationService(
-            artifacts=self.artifacts,
-            set_status=self._set_status,
-        )
         self.lifecycle = TaskLifecycleController(
             self.db,
             now=_now,
             sync_task_artifact=self.artifact_repair.sync_task_artifact_from_db,
             record_task_outcome=self.outcome_recorder.record_task_outcome,
+        )
+        self.stale_worker_reaper = StaleWorkerReaper(
+            artifacts=self.artifacts,
+            dry_verify_func=_dry_verify,
+            task_requires_diff=_task_requires_diff,
+        )
+        self.policy_learning = PolicyLearningRecorder(self.db)
+        self.execution_callbacks = ExecutionCallbackAdapter(
+            lifecycle=self.lifecycle,
+            policy_learning=self.policy_learning,
+            permission_auditor=self.permission_auditor,
+            attempt_metrics=self.attempt_metrics,
+            stale_worker_reaper=self.stale_worker_reaper,
+        )
+        self.preparation = TaskPreparationService(
+            artifacts=self.artifacts,
+            set_status=self.execution_callbacks.set_status,
         )
         self.attempt_executor = WorkerAttemptExecutor(
             artifacts=self.artifacts,
@@ -107,7 +121,7 @@ class OrchestratorService:
             workers=WORKERS,
             default_worker=ClaudeCodeWorker(),
             now=_now,
-            set_status=self._set_status,
+            set_status=self.execution_callbacks.set_status,
             build_prompt=_worker_prompt,
         )
         self.attempt_runner = TaskAttemptRunner(
@@ -115,8 +129,8 @@ class OrchestratorService:
             attempt_executor=self.attempt_executor,
             workers=WORKERS,
             default_worker=ClaudeCodeWorker(),
-            set_status=self._set_status,
-            write_attempt_metrics=self._write_attempt_metrics,
+            set_status=self.execution_callbacks.set_status,
+            write_attempt_metrics=self.execution_callbacks.write_attempt_metrics,
         )
         self.verification_runner = TaskVerificationRunner(
             artifacts=self.artifacts,
@@ -145,16 +159,10 @@ class OrchestratorService:
             verification_runner=self.verification_runner,
             review_runner=self.review_runner,
             publish_runner=self.publish_runner,
-            set_status=self._set_status,
-            record_policy_learning=self._record_policy_learning,
-            write_attempt_metrics=self._write_attempt_metrics,
+            set_status=self.execution_callbacks.set_status,
+            record_policy_learning=self.execution_callbacks.record_policy_learning,
+            write_attempt_metrics=self.execution_callbacks.write_attempt_metrics,
         )
-        self.stale_worker_reaper = StaleWorkerReaper(
-            artifacts=self.artifacts,
-            dry_verify_func=_dry_verify,
-            task_requires_diff=_task_requires_diff,
-        )
-        self.policy_learning = PolicyLearningRecorder(self.db)
         self.approval_policy = ApprovalPolicyService(self.db)
         self.execution_gate = TaskExecutionGate(
             artifacts=self.artifacts,
@@ -168,8 +176,8 @@ class OrchestratorService:
             preparation=self.preparation,
             attempt_runner=self.attempt_runner,
             completion_pipeline=self.completion_pipeline,
-            set_status=self._set_status,
-            record_policy_learning=self._record_policy_learning,
+            set_status=self.execution_callbacks.set_status,
+            record_policy_learning=self.execution_callbacks.record_policy_learning,
             now=_now,
         )
         self.task_submission = TaskSubmissionService(
@@ -189,9 +197,9 @@ class OrchestratorService:
             db=self.db,
             artifacts=self.artifacts,
             artifact_repair=self.artifact_repair,
-            reap_stale_worker_task=self._reap_stale_worker_task,
-            record_policy_learning=self._record_policy_learning,
-            write_token_ledger=self.attempt_metrics.write_token_ledger,
+            reap_stale_worker_task=self.execution_callbacks.reap_stale_worker_task,
+            record_policy_learning=self.execution_callbacks.record_policy_learning,
+            write_token_ledger=self.execution_callbacks.write_token_ledger,
             now=_now,
         )
 
@@ -420,64 +428,8 @@ class OrchestratorService:
     def _execute(self, task: dict[str, Any], project: dict[str, Any], dry_run: bool = False) -> None:
         self.task_execution.execute(task, project, dry_run=dry_run)
 
-    def _record_policy_learning(
-        self, task: dict[str, Any], project: dict[str, Any], success: bool,
-        worker: str = "", model: str = "", variant: str = "",
-        tests_passed: bool = False, codex_review_approved: bool = False,
-        pr_created: bool = False, rollback: bool = False, incident: bool = False,
-        changed_paths: list[str] | None = None,
-    ) -> None:
-        self.policy_learning.record_task_completion(
-            task,
-            project,
-            success,
-            worker=worker,
-            model=model,
-            variant=variant,
-            tests_passed=tests_passed,
-            codex_review_approved=codex_review_approved,
-            pr_created=pr_created,
-            rollback=rollback,
-            incident=incident,
-            changed_paths=changed_paths,
-        )
-
-    def _set_status(self, task_id: str, status: str, event_type: str, payload: dict[str, Any]) -> None:
-        self.lifecycle.set_status(task_id, status, event_type, payload)
-
-    def _check_worker_declared_permissions(self, task_id: str, worker_name: str, task: dict[str, Any]) -> dict[str, Any]:
-        return self.permission_auditor.check_declared_permissions(task_id, worker_name, task)
-
-    def _check_worker_diff_permissions(self, task_id: str, worker_name: str, changed_files: list[str]) -> dict[str, Any]:
-        return self.permission_auditor.check_diff_permissions(task_id, worker_name, changed_files)
-
-    def _write_attempt_metrics(
-        self,
-        task_id: str,
-        attempt_no: int,
-        attempt: dict[str, Any],
-        worker_result: Any,
-        failure: FailureClassification | None,
-        build_passed: bool | None = None,
-        review_approved: bool | None = None,
-    ) -> None:
-        self.attempt_metrics.write_attempt_metrics(
-            task_id,
-            attempt_no,
-            attempt,
-            worker_result,
-            failure,
-            build_passed=build_passed,
-            review_approved=review_approved,
-        )
-
-    def _write_token_ledger(self, task_id: str) -> None:
-        self.attempt_metrics.write_token_ledger(task_id)
-
-    def _reap_stale_worker_task(self, task: dict[str, Any]) -> None:
-        result = self.stale_worker_reaper.reap(task)
-        if result:
-            self._set_status(task["task_id"], result.status, result.event_type, result.payload)
+    def reap_stale_worker_task(self, task: dict[str, Any]) -> None:
+        self.execution_callbacks.reap_stale_worker_task(task)
 
 
 def _now() -> str:

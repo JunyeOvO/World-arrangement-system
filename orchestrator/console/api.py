@@ -112,7 +112,9 @@ class ConsoleAPI:
         return 404, "application/json", {"status": "NOT_FOUND"}
 
     def _reap_stale_tasks_for_snapshot(self) -> None:
-        reaper = getattr(self.service, "_reap_stale_worker_task", None)
+        reaper = getattr(self.service, "reap_stale_worker_task", None)
+        if not callable(reaper):
+            reaper = getattr(self.service, "_reap_stale_worker_task", None)
         if not callable(reaper):
             return
         for task in self.service.db.list_tasks(limit=100):

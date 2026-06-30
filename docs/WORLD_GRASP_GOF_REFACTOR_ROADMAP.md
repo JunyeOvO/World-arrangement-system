@@ -494,6 +494,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_task_execution_service.py` plus existing scheduler, gate, route, attempt, preparation, and completion tests.
    - Next: scheduler is now mostly API facade plus composition root; review remaining helper wrappers for whether they are stable callback adapters or should move into a composition module.
 
+4y. **Execution callback adapter**
+   - Implemented in `orchestrator/execution_callbacks.py`.
+   - Owns shared callback adapters for status transitions, policy learning, worker permission checks, attempt metrics, token ledger writes, and stale-worker reaping.
+   - Patterns: Adapter for callback-heavy collaborators, Facade over lifecycle / policy / metrics / permission / stale-reaper services.
+   - Scheduler no longer owns private callback helper methods for these behaviors; Console now prefers the public `reap_stale_worker_task(...)` facade.
+   - Tests: `tests/test_execution_callbacks.py` plus existing scheduler, console, worker permission, metrics, and stale reaper coverage.
+   - Next: consider whether scheduler's remaining composition-root construction should stay inline or move to a dedicated factory once public API facades are stable.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.
