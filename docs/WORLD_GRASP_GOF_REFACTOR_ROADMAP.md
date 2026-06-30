@@ -534,6 +534,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_router_history.py` plus existing router v3 behavior tests.
    - Next: split task-shape classification out of `router_v3.py` so route assembly, shape inference, and history economics each have direct ownership.
 
+4ad. **Router task-shape classifier**
+   - Implemented in `orchestrator/router_task_shape.py`.
+   - Owns explicit task-shape validation, read-only shape overrides, multimodal/code-change shape rules, and phrase/path-based classification helpers.
+   - `router_v3.py` keeps the legacy `classify_task_shape` import path by re-exporting the imported function, but no longer owns classification internals.
+   - Patterns: Information Expert for task-shape evidence, Strategy-style classifier for route planning, Protected Variations for future task-shape rule changes.
+   - Tests: `tests/test_router_task_shape.py` plus existing router v3 behavior tests.
+   - Next: split route selection and retry-chain construction into a shape-route policy module so `router_v3.py` becomes a thin facade over shape, history, and route-policy collaborators.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.
