@@ -542,6 +542,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_router_task_shape.py` plus existing router v3 behavior tests.
    - Next: split route selection and retry-chain construction into a shape-route policy module so `router_v3.py` becomes a thin facade over shape, history, and route-policy collaborators.
 
+4ae. **Router route policy**
+   - Implemented in `orchestrator/router_route_policy.py`.
+   - Owns task-shape-to-worker/model selection, project/default-worker override handling, OpenCode variant normalization, retry-chain construction, fallback-model extraction, and capability-profile route step construction.
+   - `router_v3.py` now delegates task-shape classification, history/cost scoring, and route-policy decisions, leaving the v3 entrypoint responsible for final route assembly and reason text only.
+   - Patterns: Strategy for shape-specific routing, Factory Method-style route/step builders, Information Expert for retry-chain and fallback model rules.
+   - Tests: `tests/test_router_route_policy.py` plus existing router v3/router integration behavior tests.
+   - Next: extract router reason/explanation formatting so `router_v3.py` can become a very small facade over classifier, history, route policy, and explanation collaborators.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.
