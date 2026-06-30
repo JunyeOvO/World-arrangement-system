@@ -5,45 +5,14 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .artifacts import ArtifactStore
-from .codex_usage_recording import CodexUsageRecorder
-from .config import ensure_runtime_dirs
-from .db import TaskDB
-from .execution_callbacks import ExecutionCallbackAdapter
 from .pr import create_pr_or_patch
-from .current_project_task_service import CurrentProjectTaskService
-from .project_command_service import ProjectCommandService
-from .project_lookup_service import ProjectLookupService
-from .task_artifact_repair import TaskArtifactRepairService
-from .task_execution_service import TaskExecutionService
-from .task_lifecycle import TaskLifecycleController
-from .task_outcome_recording import TaskOutcomeRecorder
-from .task_publish import TaskPublishRunner
-from .task_route_planner import TaskRoutePlanner
 from .reviewer import run_codex_review
 from .read_only_completion import (
     task_requires_diff as _task_requires_diff,
-    task_requests_project_verification as _task_requests_project_verification,
 )
-from .stale_worker_reaper import StaleWorkerReaper
-from .task_completion_pipeline import TaskCompletionPipeline
-from .task_execution_gate import TaskExecutionGate
-from .task_attempt_runner import TaskAttemptRunner
-from .task_preparation import TaskPreparationService
-from .task_review import TaskReviewRunner
-from .task_submission import TaskSubmissionBuilder
-from .task_submission_service import TaskSubmissionService
-from .task_operations import TaskOperationsService
-from .terminal_handlers import TerminalTaskHandler
-from .task_verification import TaskVerificationRunner
+from .service_composition import build_orchestrator_components
 from .verifier import verify
-from .approval_policy_service import ApprovalPolicyService
-from .attempt_recording import AttemptMetricsRecorder
-from .policy_learning import PolicyLearningRecorder
-from .worker_permission_audit import WorkerPermissionAuditor
-from .worker_attempt_executor import WorkerAttemptExecutor
 from .worker_prompt import build_worker_prompt
-from .world_runtime_service import WorldRuntimeService
 from .workers.claude_code_worker import ClaudeCodeWorker
 from .workers.opencode_worker import OpenCodeWorker
 
@@ -60,148 +29,26 @@ def new_task_id() -> str:
 
 class OrchestratorService:
     def __init__(self) -> None:
-        self.paths = ensure_runtime_dirs()
-        self.db = TaskDB(self.paths.state_db)
-        self.db.init()
-        self.artifacts = ArtifactStore(self.paths.runs)
-        self.project_lookup = ProjectLookupService()
-        self.project_commands = ProjectCommandService()
-        self.attempt_metrics = AttemptMetricsRecorder(self.db)
-        self.permission_auditor = WorkerPermissionAuditor(self.db)
-        self.submission_builder = TaskSubmissionBuilder()
-        self.artifact_repair = TaskArtifactRepairService(
-            db=self.db,
-            artifacts=self.artifacts,
-            metrics_recorder=self.attempt_metrics,
-        )
-        self.outcome_recorder = TaskOutcomeRecorder(db=self.db, artifacts=self.artifacts)
-        self.codex_usage = CodexUsageRecorder(
-            db=self.db,
-            artifacts=self.artifacts,
-            write_token_ledger=self.attempt_metrics.write_token_ledger,
-        )
-        self.world_runtime = WorldRuntimeService(
+        self.components = build_orchestrator_components(
             profile_project=self.profile_project,
             detect_project=self.detect_project,
-            model_metrics_summary=self.db.model_metrics_summary,
-            new_run_id=new_task_id,
-        )
-        self.route_planner = TaskRoutePlanner(
-            artifacts=self.artifacts,
-            model_metrics_summary=self.db.model_metrics_summary,
-            world_plan_factory=self.world_create_plan,
-        )
-        self.lifecycle = TaskLifecycleController(
-            self.db,
-            now=_now,
-            sync_task_artifact=self.artifact_repair.sync_task_artifact_from_db,
-            record_task_outcome=self.outcome_recorder.record_task_outcome,
-        )
-        self.stale_worker_reaper = StaleWorkerReaper(
-            artifacts=self.artifacts,
-            dry_verify_func=_dry_verify,
-            task_requires_diff=_task_requires_diff,
-        )
-        self.policy_learning = PolicyLearningRecorder(self.db)
-        self.execution_callbacks = ExecutionCallbackAdapter(
-            lifecycle=self.lifecycle,
-            policy_learning=self.policy_learning,
-            permission_auditor=self.permission_auditor,
-            attempt_metrics=self.attempt_metrics,
-            stale_worker_reaper=self.stale_worker_reaper,
-        )
-        self.preparation = TaskPreparationService(
-            artifacts=self.artifacts,
-            set_status=self.execution_callbacks.set_status,
-        )
-        self.attempt_executor = WorkerAttemptExecutor(
-            artifacts=self.artifacts,
-            permission_auditor=self.permission_auditor,
-            metrics_recorder=self.attempt_metrics,
-            workers=WORKERS,
-            default_worker=ClaudeCodeWorker(),
-            now=_now,
-            set_status=self.execution_callbacks.set_status,
-            build_prompt=_worker_prompt,
-        )
-        self.attempt_runner = TaskAttemptRunner(
-            artifacts=self.artifacts,
-            attempt_executor=self.attempt_executor,
-            workers=WORKERS,
-            default_worker=ClaudeCodeWorker(),
-            set_status=self.execution_callbacks.set_status,
-            write_attempt_metrics=self.execution_callbacks.write_attempt_metrics,
-        )
-        self.verification_runner = TaskVerificationRunner(
-            artifacts=self.artifacts,
-            verify_func=verify,
-            dry_verify_func=_dry_verify,
-        )
-        self.review_runner = TaskReviewRunner(
-            review_func=run_codex_review,
-            record_codex_usage=self.codex_usage.record_review_usage,
-        )
-        self.publish_runner = TaskPublishRunner(
-            artifacts=self.artifacts,
-            db=self.db,
-            publish_func=create_pr_or_patch,
-            now=_now,
-        )
-        self.terminal_handler = TerminalTaskHandler(
-            artifacts=self.artifacts,
-            metrics_recorder=self.attempt_metrics,
-            dry_verify_func=_dry_verify,
-            record_review_codex_usage=self.codex_usage.record_review_usage,
-        )
-        self.completion_pipeline = TaskCompletionPipeline(
-            artifacts=self.artifacts,
-            terminal_handler=self.terminal_handler,
-            verification_runner=self.verification_runner,
-            review_runner=self.review_runner,
-            publish_runner=self.publish_runner,
-            set_status=self.execution_callbacks.set_status,
-            record_policy_learning=self.execution_callbacks.record_policy_learning,
-            write_attempt_metrics=self.execution_callbacks.write_attempt_metrics,
-        )
-        self.approval_policy = ApprovalPolicyService(self.db)
-        self.execution_gate = TaskExecutionGate(
-            artifacts=self.artifacts,
-            approval_policy=self.approval_policy,
-        )
-        self.task_execution = TaskExecutionService(
-            db=self.db,
-            artifacts=self.artifacts,
-            execution_gate=self.execution_gate,
-            route_planner=self.route_planner,
-            preparation=self.preparation,
-            attempt_runner=self.attempt_runner,
-            completion_pipeline=self.completion_pipeline,
-            set_status=self.execution_callbacks.set_status,
-            record_policy_learning=self.execution_callbacks.record_policy_learning,
-            now=_now,
-        )
-        self.task_submission = TaskSubmissionService(
-            db=self.db,
-            artifacts=self.artifacts,
-            submission_builder=self.submission_builder,
-            codex_usage=self.codex_usage,
-            new_task_id=new_task_id,
-            now=_now,
+            world_create_plan=self.world_create_plan,
+            submit_task=self.submit_task,
             execute_task=self._execute,
             get_task_status=self.get_task_status,
-        )
-        self.current_project_tasks = CurrentProjectTaskService(
-            submit_task=self.submit_task,
-        )
-        self.task_operations = TaskOperationsService(
-            db=self.db,
-            artifacts=self.artifacts,
-            artifact_repair=self.artifact_repair,
-            reap_stale_worker_task=self.execution_callbacks.reap_stale_worker_task,
-            record_policy_learning=self.execution_callbacks.record_policy_learning,
-            write_token_ledger=self.execution_callbacks.write_token_ledger,
+            new_task_id=new_task_id,
             now=_now,
+            dry_verify_func=_dry_verify,
+            task_requires_diff=_task_requires_diff,
+            verify_func=verify,
+            review_func=run_codex_review,
+            publish_func=create_pr_or_patch,
+            build_prompt=_worker_prompt,
+            workers=WORKERS,
+            default_worker=ClaudeCodeWorker(),
         )
+        for name, value in self.components.__dict__.items():
+            setattr(self, name, value)
 
     def list_projects(self, query: str | None = None) -> dict[str, Any]:
         return self.project_lookup.list_projects(query)

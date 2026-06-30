@@ -502,6 +502,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_execution_callbacks.py` plus existing scheduler, console, worker permission, metrics, and stale reaper coverage.
    - Next: consider whether scheduler's remaining composition-root construction should stay inline or move to a dedicated factory once public API facades are stable.
 
+4z. **Service composition factory**
+   - Implemented in `orchestrator/service_composition.py`.
+   - Owns construction of the orchestrator service graph: DB, artifacts, lookup, runtime, route planning, lifecycle, callback adapters, preparation, attempts, completion, submission, and operation services.
+   - Patterns: GRASP Creator for service graph ownership, GoF Abstract Factory-style component assembly, Facade-preserving adapter from the scheduler public API to composed services.
+   - Scheduler now delegates dependency construction to `build_orchestrator_components(...)` and remains primarily a public CLI/MCP-compatible API facade.
+   - Tests: `tests/test_service_composition.py` plus existing scheduler, World CLI/tools, agent-injection, multimodal, and review-gate coverage.
+   - Next: continue shrinking large policy modules outside scheduler, especially `worker_prompt.py`, `router_v3.py`, and read-only salvage behavior.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.
