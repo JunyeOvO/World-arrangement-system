@@ -166,6 +166,23 @@ Pattern mapping:
 
 This removes capability-profile construction and agent display-name derivation from scheduler.
 
+## Slice 8 Implemented: Worker Attempt Executor
+
+Moved the mechanical "run one worker attempt" flow into `orchestrator/worker_attempt_executor.py`.
+
+New ownership:
+
+- `scheduler.py`: iterates retry attempts and decides global task transitions such as retry, block, verify, review, publish.
+- `worker_attempt_executor.py`: prepares attempt metadata, runs permission preflight, injects attempt-level AGENTS.md for OpenCode, emits worker-started events, invokes the worker adapter, classifies worker failure, salvages read-only partial results, writes attempt/root result artifacts, and records attempt metrics.
+
+Pattern mapping:
+
+- `WorkerAttemptExecutor`: Template Method for one attempt lifecycle.
+- `WorkerAttemptOutcome`: explicit result object for scheduler decisions.
+- injected `build_prompt`, `set_status`, `permission_auditor`, and `metrics_recorder`: Dependency Inversion and Low Coupling.
+
+This is the main step toward making `scheduler.py` a workflow Controller instead of the owner of worker execution mechanics.
+
 ## Verification
 
 Targeted tests:
@@ -179,7 +196,8 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
 
 1. **Worker attempt strategy**
    - Retry-chain planning extracted to `orchestrator/worker_attempts.py`.
-   - Next: extract worker-result normalization and attempt lifecycle hooks from `scheduler.py`.
+   - Attempt execution mechanics extracted to `orchestrator/worker_attempt_executor.py`.
+   - Next: split post-attempt decision policy for retry/block/recover/no-diff from the scheduler loop.
    - Patterns: Strategy for retry attempts, Adapter for worker result normalization.
 
 1a. **Task routing policy**

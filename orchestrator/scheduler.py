@@ -46,7 +46,6 @@ from .risk_policy import check_changed_files, evaluate_task
 from .router import plan_route
 from .read_only_completion import (
     extract_worker_success_text as _extract_worker_success_text,
-    read_only_failure_summary as _read_only_failure_summary,
     read_only_result_can_finish as _read_only_result_can_finish,
     read_only_review as _read_only_review,
     skip_project_verification_for_read_only_task as _skip_project_verification_for_read_only_task,
@@ -74,6 +73,7 @@ from .worker_attempts import (
     is_retryable_failure as _is_retryable_failure,
     should_recover_failed_worker_diff as _should_recover_failed_worker_diff,
 )
+from .worker_attempt_executor import WorkerAttemptExecutor
 from .worker_prompt import build_worker_prompt
 from .workers.claude_code_worker import ClaudeCodeWorker
 from .workers.mimo_vision_adapter import MimoVisionAdapter
@@ -103,6 +103,16 @@ class OrchestratorService:
             now=_now,
             sync_task_artifact=self._sync_task_artifact_from_db,
             record_task_outcome=self._record_task_outcome,
+        )
+        self.attempt_executor = WorkerAttemptExecutor(
+            artifacts=self.artifacts,
+            permission_auditor=self.permission_auditor,
+            metrics_recorder=self.attempt_metrics,
+            workers=WORKERS,
+            default_worker=ClaudeCodeWorker(),
+            now=_now,
+            set_status=self._set_status,
+            build_prompt=_worker_prompt,
         )
 
     def list_projects(self, query: str | None = None) -> dict[str, Any]:
@@ -779,34 +789,33 @@ class OrchestratorService:
 
         for idx, attempt in enumerate(retry_chain):
             attempt = apply_read_budget_to_route(attempt, task)
-            attempt_dir = Path(task["run_dir"]) / "attempts" / f"{idx + 1:02d}"
-            attempt_dir.mkdir(parents=True, exist_ok=True)
-            attempt["attempt_no"] = idx + 1
-            attempt["started_at"] = _now()
+            outcome = self.attempt_executor.run(
+                task_id=task_id,
+                task=task,
+                worktree_path=Path(wt.path),
+                attempt=attempt,
+                attempt_no=idx + 1,
+                dry_run=dry_run,
+            )
+            attempt = outcome.attempt
+            worker_result = outcome.worker_result
+            failure = outcome.failure
 
-            worker = WORKERS.get(attempt["worker"], ClaudeCodeWorker())
-            preflight = self._check_worker_declared_permissions(task_id, attempt["worker"], task)
-            if not preflight["allowed"]:
-                failure = FailureClassification(
-                    "forbidden_path",
-                    False,
-                    "block_and_surface_policy_violation",
-                    [item["reason"] for item in preflight.get("denied", [])],
-                )
+            if outcome.kind == "preflight_denied":
                 self._set_status(
                     task_id,
                     "BLOCKED",
                     "permission_denied",
-                    {"phase": "preflight", "permission": preflight, "failure": failure.to_dict()},
+                    {"phase": "preflight", "permission": outcome.permission, "failure": failure.to_dict() if failure else None},
                 )
                 self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], incident=True)
                 return
-            if preflight["requires_ask"]:
+            if outcome.kind == "preflight_requires_ask":
                 self._set_status(
                     task_id,
                     "HARD_APPROVAL_WAITING",
                     "permission_requires_approval",
-                    {"phase": "preflight", "permission": preflight},
+                    {"phase": "preflight", "permission": outcome.permission},
                 )
                 self.artifacts.write_text(
                     task_id,
@@ -814,39 +823,7 @@ class OrchestratorService:
                     "Static worker permissions require explicit approval for declared write paths.\n",
                 )
                 return
-
-            # ── Idempotent AGENTS.md injection before each OpenCode attempt ──
-            # Covers prime=opencode AND ClaudeCodeWorker→OpenCodeWorker escalation.
-            # Never overwrites an existing AGENTS.md (user file or prior injection).
-            if attempt["worker"] == "opencode":
-                attempt_inject = inject_agents_md(Path(wt.path))
-                self.artifacts.write_json(
-                    task_id, f"attempts/{idx + 1:02d}/agents_md.json", attempt_inject.__dict__,
-                )
-                if not attempt_inject.injected:
-                    self._set_status(task_id, "EXECUTING", "agents_md_skipped", attempt_inject.__dict__)
-
-            self._set_status(task_id, "EXECUTING", "worker_started", {
-                "worker": attempt["worker"], "model": attempt["model"],
-                "attempt": idx + 1, "variant": attempt.get("variant"),
-            })
-
-            prompt = _worker_prompt(task, {"selected_model": attempt["model"], "selected_worker": attempt["worker"]})
-            task_for_worker = {**task, "task_id": task_id}
-            try:
-                worker_result = worker.run(prompt, Path(wt.path), attempt, task_for_worker, dry_run=dry_run)
-            except Exception as exc:
-                failure = FailureClassification(
-                    "worker_exception",
-                    False,
-                    "inspect_worker_control_files",
-                    [str(exc)],
-                )
-                attempt["finished_at"] = _now()
-                attempt["status"] = "failed"
-                attempt["failure_reason"] = failure.failure_reason
-                attempt["failure"] = failure.to_dict()
-                self.artifacts.write_json(task_id, f"attempts/{idx + 1:02d}/result.json", attempt)
+            if outcome.kind == "worker_exception":
                 self._set_status(
                     task_id,
                     "FAILED_FINAL",
@@ -855,70 +832,42 @@ class OrchestratorService:
                 )
                 self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], incident=True)
                 return
-            diff_permissions = self._check_worker_diff_permissions(task_id, attempt["worker"], worker_result.changed_files)
-            if not diff_permissions["allowed"]:
-                failure = FailureClassification(
-                    "forbidden_path",
-                    False,
-                    "block_and_surface_policy_violation",
-                    [item["reason"] for item in diff_permissions.get("denied", [])],
-                )
-                worker_result.status = "blocked"
-                worker_result.risks.extend([item["reason"] for item in diff_permissions.get("denied", [])])
-                self.artifacts.write_json(task_id, "result.json", worker_result.__dict__)
+            if outcome.kind == "diff_denied":
                 self._set_status(
                     task_id,
                     "BLOCKED",
                     "permission_denied",
-                    {"phase": "diff", "permission": diff_permissions, "failure": failure.to_dict()},
+                    {"phase": "diff", "permission": outcome.permission, "failure": failure.to_dict() if failure else None},
                 )
                 self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], incident=True)
                 return
-            if diff_permissions["requires_ask"]:
+            if outcome.kind == "diff_requires_ask":
                 self._set_status(
                     task_id,
                     "HARD_APPROVAL_WAITING",
                     "permission_requires_approval",
-                    {"phase": "diff", "permission": diff_permissions},
+                    {"phase": "diff", "permission": outcome.permission},
                 )
                 return
-
-            attempt["finished_at"] = _now()
-            attempt["status"] = worker_result.status
-            attempt["summary"] = worker_result.summary
-            failure = None
-            if worker_result.status != "success":
-                failure = classify_worker_failure(
-                    status=worker_result.status,
-                    summary=worker_result.summary,
-                    risks=worker_result.risks,
-                    changed_files=worker_result.changed_files,
-                    stdout_path=worker_result.stdout_path,
-                    stderr_path=worker_result.stderr_path,
+            if outcome.kind != "completed" or worker_result is None:
+                self._set_status(
+                    task_id,
+                    "FAILED_FINAL",
+                    "worker_unknown_attempt_outcome",
+                    {"attempt": idx + 1, "kind": outcome.kind},
                 )
-                attempt["failure_reason"] = failure.failure_reason
-                attempt["failure"] = failure.to_dict()
+                self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], incident=True)
+                return
+
+            if failure:
                 last_failure = failure
                 last_attempt = attempt
-                salvaged_summary = _read_only_failure_summary(task, worker_result, failure)
-                if salvaged_summary:
-                    worker_result.status = "success"
-                    worker_result.summary = salvaged_summary
-                    worker_result.risks.append("read_only_no_diff_salvaged_from_worker_failure")
-                    attempt["status"] = "success"
-                    attempt["summary"] = salvaged_summary
-                    attempt.pop("failure_reason", None)
-                    attempt.pop("failure", None)
-                    failure = None
-                    last_failure = None
-            self.artifacts.write_json(task_id, f"attempts/{idx + 1:02d}/result.json", attempt)
-            self.artifacts.write_json(task_id, "result.json", worker_result.__dict__)
-            self._write_attempt_metrics(task_id, idx + 1, attempt, worker_result, failure)
 
             if worker_result.status == "success":
                 if not dry_run and _task_requires_diff(task) and not worker_result.changed_files:
+                    worker_name = WORKERS.get(attempt["worker"], WORKERS["claude_code"]).name
                     worker_result.status = "failed"
-                    worker_result.summary = f"{worker.name} completed without producing a diff"
+                    worker_result.summary = f"{worker_name} completed without producing a diff"
                     worker_result.risks.append("worker_no_diff")
                     failure = classify_worker_failure(
                         status=worker_result.status,
