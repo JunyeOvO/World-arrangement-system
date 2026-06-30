@@ -510,6 +510,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_service_composition.py` plus existing scheduler, World CLI/tools, agent-injection, multimodal, and review-gate coverage.
    - Next: continue shrinking large policy modules outside scheduler, especially `worker_prompt.py`, `router_v3.py`, and read-only salvage behavior.
 
+4aa. **Worker prompt profile strategy and seed evidence split**
+   - Implemented in `orchestrator/worker_prompt_profiles.py` and `orchestrator/worker_prompt_seed.py`.
+   - `worker_prompt.py` remains the stable prompt Builder/Facade; profile-specific read-only output contracts and early-output strategies now live in the profile strategy module.
+   - Seed file ranking, bounded evidence excerpting, and secret redaction now live in the seed evidence module.
+   - Patterns: Strategy for read-budget profile behavior, Information Expert for seed evidence selection/redaction, Builder facade for final prompt assembly.
+   - Tests: `tests/test_worker_prompt_profiles.py`, `tests/test_worker_prompt_seed.py`, plus existing scheduler and multimodal prompt coverage.
+   - Next: use these boundaries to harden `code_contract_audit` partial-result salvage without bloating the base prompt builder.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.
