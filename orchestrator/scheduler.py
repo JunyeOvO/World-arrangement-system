@@ -11,6 +11,7 @@ from .config import ensure_runtime_dirs
 from .db import TaskDB
 from .pr import create_pr_or_patch
 from .project_registry import detect_project, load_projects
+from .project_command_service import ProjectCommandService
 from .task_protocol import (
     apply_read_budget_to_route,
 )
@@ -19,16 +20,6 @@ from .task_lifecycle import TaskLifecycleController
 from .task_outcome_recording import TaskOutcomeRecorder
 from .task_publish import TaskPublishRunner
 from .task_route_planner import TaskRoutePlanner
-from .project_commands import (
-    handle_confirm_project_profile,
-    handle_discover_projects,
-    handle_ignore_project,
-    handle_list_unregistered_projects,
-    handle_profile_project,
-    handle_refresh_project_profile,
-    handle_register_project,
-    handle_scan_project_roots,
-)
 from .reviewer import run_codex_review
 from .read_only_completion import (
     task_requires_diff as _task_requires_diff,
@@ -72,6 +63,7 @@ class OrchestratorService:
         self.db = TaskDB(self.paths.state_db)
         self.db.init()
         self.artifacts = ArtifactStore(self.paths.runs)
+        self.project_commands = ProjectCommandService()
         self.attempt_metrics = AttemptMetricsRecorder(self.db)
         self.permission_auditor = WorkerPermissionAuditor(self.db)
         self.submission_builder = TaskSubmissionBuilder()
@@ -431,35 +423,35 @@ class OrchestratorService:
 
     def scan_project_roots(self, roots: list[str] | None = None, max_depth: int = 3) -> dict[str, Any]:
         """Scan root directories for project candidates (.git repos)."""
-        return handle_scan_project_roots(roots, max_depth)
+        return self.project_commands.scan_project_roots(roots, max_depth)
 
     def discover_projects(self, roots: list[str] | None = None, max_depth: int = 3) -> dict[str, Any]:
         """Scan + profile: discover projects and return full profiles."""
-        return handle_discover_projects(roots, max_depth)
+        return self.project_commands.discover_projects(roots, max_depth)
 
     def profile_project(self, repo_path: str, force: bool = False) -> dict[str, Any]:
         """Deep-profile a single project."""
-        return handle_profile_project(repo_path, force)
+        return self.project_commands.profile_project(repo_path, force)
 
     def register_project(self, repo_path: str, confirm: bool = False) -> dict[str, Any]:
         """Register a discovered project into projects.yaml."""
-        return handle_register_project(repo_path, confirm)
+        return self.project_commands.register_project(repo_path, confirm)
 
     def refresh_project_profile(self, project_id: str) -> dict[str, Any]:
         """Refresh a registered project's profile."""
-        return handle_refresh_project_profile(project_id)
+        return self.project_commands.refresh_project_profile(project_id)
 
     def list_unregistered_projects(self) -> dict[str, Any]:
         """List projects in pending_confirmation status."""
-        return handle_list_unregistered_projects()
+        return self.project_commands.list_unregistered_projects()
 
     def confirm_project_profile(self, project_id: str) -> dict[str, Any]:
         """Confirm a pending project."""
-        return handle_confirm_project_profile(project_id)
+        return self.project_commands.confirm_project_profile(project_id)
 
     def ignore_project(self, repo_path: str, reason: str = "") -> dict[str, Any]:
         """Add a project path to the ignore list."""
-        return handle_ignore_project(repo_path, reason)
+        return self.project_commands.ignore_project(repo_path, reason)
 
     def _execute(self, task: dict[str, Any], project: dict[str, Any], dry_run: bool = False) -> None:
         task_id = task["task_id"]

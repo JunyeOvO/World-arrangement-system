@@ -454,6 +454,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_task_operations.py` plus existing baseline, scheduler, CLI, and Console coverage.
    - Next: move current-project submission/project-command wrappers behind narrower facades if scheduler remains above the target size after the execution pipeline cleanup.
 
+4t. **Project command service**
+   - Implemented in `orchestrator/project_command_service.py`.
+   - Owns the scheduler-facing facade for project scan, discovery, profiling, registration, refresh, pending confirmation, confirmation, and ignore commands.
+   - Patterns: Facade over Adaptive Project Layer command handlers, Controller for project registry command dispatch.
+   - Scheduler still exposes the same public CLI/MCP methods but no longer imports every individual project command handler.
+   - Tests: `tests/test_project_command_service.py` plus existing project discovery, registry, CLI, and MCP-facing coverage.
+   - Next: extract current-project task submission if `submit_current_project_task` and `submit_task` remain the largest non-execution responsibilities.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.
