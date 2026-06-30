@@ -165,7 +165,7 @@ def test_should_recover_failed_worker_diff_only_for_failed_with_changes():
 def test_verify_gate_requires_build_passed():
     from pathlib import Path
 
-    source = Path("orchestrator/scheduler.py").read_text(encoding="utf-8")
+    source = Path("orchestrator/task_verification.py").read_text(encoding="utf-8")
 
     assert "not verify_result.build_passed" in source
 

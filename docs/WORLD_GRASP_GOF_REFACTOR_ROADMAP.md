@@ -214,6 +214,23 @@ Pattern mapping:
 
 This removes presentation formatting from scheduler and gives the final result artifact a direct test boundary.
 
+## Slice 11 Implemented: Task Verification Runner
+
+Moved verification command selection, project verification execution, changed-file safety checks,
+verify artifact writes, and verification failure classification into `orchestrator/task_verification.py`.
+
+New ownership:
+
+- `scheduler.py`: starts the VERIFYING phase and consumes a verification outcome.
+- `task_verification.py`: applies `verification_policy`, skips project commands for eligible read-only tasks, runs verifier or dry verifier, writes verify artifacts, checks forbidden paths, and classifies verify failures.
+
+Pattern mapping:
+
+- `TaskVerificationRunner`: Facade over verifier, verification policy, safety checks, and artifact writes.
+- `TaskVerificationOutcome`: explicit result object for scheduler decisions.
+
+This removes another large tail section from `_execute` and puts the build/test gate behind a direct test boundary.
+
 ## Verification
 
 Targeted tests:
@@ -259,6 +276,10 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
 4a. **Task result document**
    - Implemented in `orchestrator/task_result_document.py`.
    - Next: route all final artifact formatting through document builders instead of scheduler helpers.
+
+4b. **Task verification runner**
+   - Implemented in `orchestrator/task_verification.py`.
+   - Next: extract review and publish tail into separate services.
 
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.

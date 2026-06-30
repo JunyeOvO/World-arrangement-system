@@ -17,7 +17,6 @@ from .db import TaskDB
 from .failure_classifier import (
     FailureClassification,
     classify_review_failure,
-    classify_verify_failure,
 )
 from .multimodal import load_image_inputs
 from .outcomes import derive_task_outcome
@@ -27,7 +26,6 @@ from .project_registry import detect_project, load_projects
 from .task_protocol import (
     apply_read_budget_to_route,
     normalize_task_protocol,
-    verification_commands_for_policy,
 )
 from .task_lifecycle import TaskLifecycleController
 from .project_commands import (
@@ -41,13 +39,12 @@ from .project_commands import (
     handle_scan_project_roots,
 )
 from .reviewer import run_codex_review
-from .risk_policy import check_changed_files, evaluate_task
+from .risk_policy import evaluate_task
 from .router import plan_route
 from .read_only_completion import (
     extract_worker_success_text as _extract_worker_success_text,
     read_only_result_can_finish as _read_only_result_can_finish,
     read_only_review as _read_only_review,
-    skip_project_verification_for_read_only_task as _skip_project_verification_for_read_only_task,
     task_requires_diff as _task_requires_diff,
     task_requests_project_verification as _task_requests_project_verification,
 )
@@ -58,6 +55,7 @@ from .task_routing import (
     world_write_policy as _world_write_policy,
 )
 from .task_result_document import build_final_markdown as _final_md
+from .task_verification import TaskVerificationRunner
 from .verifier import verify, write_verify_result
 from .agents_md import inject_agents_md
 from .worktree import prepare_worktree
@@ -112,6 +110,11 @@ class OrchestratorService:
             now=_now,
             set_status=self._set_status,
             build_prompt=_worker_prompt,
+        )
+        self.verification_runner = TaskVerificationRunner(
+            artifacts=self.artifacts,
+            verify_func=verify,
+            dry_verify_func=_dry_verify,
         )
 
     def list_projects(self, query: str | None = None) -> dict[str, Any]:
@@ -984,45 +987,20 @@ class OrchestratorService:
 
         # ── Verify ──
         self._set_status(task_id, "VERIFYING", "verify_started", {})
-        test_commands, build_commands = verification_commands_for_policy(
-            str(task.get("verification_policy") or "full"),
-            list(task.get("test_commands", [])),
-            list(task.get("build_commands", [])),
+        verification = self.verification_runner.run(
+            task_id=task_id,
+            task=task,
+            worktree_path=Path(wt.path),
+            worker_result=final_result,
+            last_attempt=last_attempt,
+            dry_run=dry_run,
         )
-        if _skip_project_verification_for_read_only_task(task, final_result):
-            test_commands = []
-            build_commands = []
-        verify_result = verify(
-            Path(wt.path), test_commands,
-            build_commands,
-            Path(task["run_dir"]) / "verify",
-            permission_worker=last_attempt["worker"] if last_attempt else None,
-        ) if not dry_run else _dry_verify(task)
-        forbidden = check_changed_files(verify_result.changed_files, task.get("forbidden_paths"))
-        verify_result.forbidden_allowed = forbidden.allowed
-        write_verify_result(verify_result, Path(task["run_dir"]) / "verify" / "verify.json")
-        self.artifacts.write_json(task_id, "verify/changed_files.json", verify_result.changed_files)
+        verify_result = verification.verify_result
+        forbidden = verification.forbidden
 
-        if (
-            not verify_result.tests_passed
-            or not verify_result.build_passed
-            or not forbidden.allowed
-            or not verify_result.command_permissions_allowed
-        ):
-            failure = classify_verify_failure(
-                tests_passed=verify_result.tests_passed,
-                build_passed=verify_result.build_passed,
-                forbidden_allowed=forbidden.allowed,
-                command_permissions_allowed=verify_result.command_permissions_allowed,
-                evidence=[
-                    *forbidden.blocking_issues,
-                    *[
-                        result.permission_reason
-                        for result in verify_result.command_results
-                        if not result.permission_allowed or result.permission_requires_ask
-                    ],
-                ],
-            )
+        if not verification.passed:
+            failure = verification.failure
+            assert failure is not None
             if last_attempt:
                 self._write_attempt_metrics(
                     task_id,
