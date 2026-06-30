@@ -6,16 +6,18 @@ from pathlib import Path
 from orchestrator.scheduler import (
     OrchestratorService,
     _apply_route_override,
-    _build_retry_chain,
-    _is_retryable_failure,
     _read_only_failure_summary,
-    _should_recover_failed_worker_diff,
     _skip_project_verification_for_read_only_task,
     _task_requires_diff,
     _task_requests_project_verification,
     _worker_prompt,
 )
 from orchestrator.failure_classifier import FailureClassification
+from orchestrator.worker_attempts import (
+    build_retry_chain as _build_retry_chain,
+    is_retryable_failure as _is_retryable_failure,
+    should_recover_failed_worker_diff as _should_recover_failed_worker_diff,
+)
 from orchestrator.workers.base import WorkerResult
 
 

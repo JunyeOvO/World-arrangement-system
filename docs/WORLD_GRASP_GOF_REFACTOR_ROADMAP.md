@@ -57,6 +57,31 @@ The scheduler keeps `_worker_prompt(...)` only as a compatibility wrapper:
 return build_worker_prompt(task, route, task_requires_diff=_task_requires_diff)
 ```
 
+## Slice 2 Started: Worker Attempt Strategy
+
+Moved retry-chain planning out of `orchestrator/scheduler.py` into
+`orchestrator/worker_attempts.py`.
+
+New ownership:
+
+- `scheduler.py`: consumes the planned attempt chain during task execution.
+- `worker_attempts.py`: retry-chain construction, retryable-failure predicates, failed-diff recovery predicate.
+
+Pattern mapping:
+
+- `build_retry_chain(...)`: Strategy entrypoint for route-specific escalation plans.
+- route-provided `retry_chain`: Strategy object supplied by the router.
+- string/dict fallback model handling: Adapter-style normalization into one attempt shape.
+
+The scheduler imports compatibility aliases so existing tests and call sites continue to work:
+
+```python
+from .worker_attempts import build_retry_chain as _build_retry_chain
+```
+
+Remaining work in this slice: move worker-result normalization and attempt lifecycle hooks out of
+`_execute` after this smaller boundary is stable.
+
 ## Verification
 
 Targeted tests:
@@ -69,8 +94,8 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
 ## Next Refactor Slices
 
 1. **Worker attempt strategy**
-   - Extract retry-chain execution and worker-result normalization from `scheduler.py`.
-   - Candidate module: `orchestrator/worker_attempts.py`.
+   - Retry-chain planning extracted to `orchestrator/worker_attempts.py`.
+   - Next: extract worker-result normalization and attempt lifecycle hooks from `scheduler.py`.
    - Patterns: Strategy for retry attempts, Adapter for worker result normalization.
 
 2. **Read-only completion policy**
