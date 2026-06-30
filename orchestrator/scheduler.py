@@ -36,13 +36,13 @@ from .project_commands import (
     handle_scan_project_roots,
 )
 from .reviewer import run_codex_review
-from .risk_policy import evaluate_task
 from .read_only_completion import (
     read_only_result_can_finish as _read_only_result_can_finish,
     task_requires_diff as _task_requires_diff,
     task_requests_project_verification as _task_requests_project_verification,
 )
 from .stale_worker_reaper import StaleWorkerReaper
+from .task_execution_gate import TaskExecutionGate
 from .task_result_document import build_final_markdown as _final_md
 from .task_review import TaskReviewRunner
 from .task_submission import TaskSubmissionBuilder
@@ -51,7 +51,6 @@ from .task_verification import TaskVerificationRunner
 from .verifier import verify
 from .agents_md import inject_agents_md
 from .worktree import prepare_worktree
-from .approval_graph import ApprovalMode
 from .approval_policy_service import ApprovalPolicyService
 from .attempt_recording import AttemptMetricsRecorder
 from .policy_learning import PolicyLearningRecorder
@@ -154,6 +153,10 @@ class OrchestratorService:
         )
         self.policy_learning = PolicyLearningRecorder(self.db)
         self.approval_policy = ApprovalPolicyService(self.db)
+        self.execution_gate = TaskExecutionGate(
+            artifacts=self.artifacts,
+            approval_policy=self.approval_policy,
+        )
 
     def list_projects(self, query: str | None = None) -> dict[str, Any]:
         projects = load_projects()
@@ -533,37 +536,13 @@ class OrchestratorService:
 
     def _execute(self, task: dict[str, Any], project: dict[str, Any], dry_run: bool = False) -> None:
         task_id = task["task_id"]
-        task["task_type"] = self.approval_policy.classify_task_type(task["user_goal"], project)
-
-        # ── Static risk check ──
-        risk = evaluate_task(task["user_goal"], task["risk_level"], task["auto_pr"], task["auto_merge"])
-        self.artifacts.write_json(task_id, "risk.json", risk.__dict__)
-        if not risk.allowed:
-            self._set_status(task_id, "FAILED_FINAL", "risk_blocked", risk.__dict__)
-            self._record_policy_learning(task, project, success=False, incident=True)
+        gate = self.execution_gate.run(task, project)
+        for transition in gate.transitions:
+            self._set_status(task_id, transition.status, transition.event_type, transition.payload)
+        if not gate.continue_execution:
+            if gate.policy_incident:
+                self._record_policy_learning(task, project, success=False, incident=True)
             return
-
-        # ── Dynamic Approval Graph ──
-        approval = self.approval_policy.decide(task, project)
-        self.artifacts.write_json(task_id, "approval.json", approval.to_dict())
-        self._set_status(task_id, "CLASSIFIED", "classified", {"task_type": task["task_type"]})
-
-        if approval.mode == ApprovalMode.BLOCKED:
-            self._set_status(task_id, "BLOCKED", "approval_blocked", approval.to_dict())
-            return
-        self._set_status(task_id, "DYNAMIC_RISK_SCORED", "risk_scored", {"risk_score": approval.risk_score})
-        self._set_status(task_id, "APPROVAL_DECIDED", "approval_decided", approval.to_dict())
-
-        if approval.mode == ApprovalMode.HARD_APPROVAL:
-            self._set_status(task_id, "HARD_APPROVAL_WAITING", "awaiting_hard_approval", approval.to_dict())
-            self.artifacts.write_text(task_id, "approval_explanation.md", self.approval_policy.explain(approval, task))
-            return
-        elif approval.mode == ApprovalMode.SOFT_APPROVAL:
-            self._set_status(task_id, "SOFT_APPROVAL_WAITING", "awaiting_soft_approval", approval.to_dict())
-        elif approval.mode == ApprovalMode.AUTO_SILENT:
-            self._set_status(task_id, "AUTO_SILENT", "auto_silent", approval.to_dict())
-        elif approval.mode == ApprovalMode.AUTO_WITH_SUMMARY:
-            self._set_status(task_id, "AUTO_WITH_SUMMARY", "auto_with_summary", approval.to_dict())
 
         route = self.route_planner.route_for_task(task, project)
         route = apply_read_budget_to_route(route, task)

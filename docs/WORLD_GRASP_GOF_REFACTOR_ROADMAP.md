@@ -414,6 +414,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_task_route_planner.py` plus existing scheduler and World tools coverage.
    - Next: split retry-attempt sequencing or static risk/approval gating out of `_execute`.
 
+4o. **Task execution gate**
+   - Implemented in `orchestrator/task_execution_gate.py`.
+   - Owns task-type classification, static risk evaluation, dynamic approval decisioning, risk/approval artifact writes, approval explanation artifact writes, and pre-route status transition planning.
+   - Patterns: Facade over risk policy and approval policy, Controller for the pre-route execution gate, Command-style `StatusTransition` results for scheduler application.
+   - Scheduler now applies returned gate transitions and no longer imports `evaluate_task` or `ApprovalMode`.
+   - Tests: `tests/test_task_execution_gate.py` plus existing scheduler, risk policy, and approval policy coverage.
+   - Next: split retry-attempt sequencing from `_execute` so worker attempt decisions can be tested without the full scheduler.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.
