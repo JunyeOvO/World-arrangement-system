@@ -406,6 +406,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_approval_policy_service.py` plus existing dynamic approval and scheduler coverage.
    - Next: extract `_execute` risk/approval gate into a small execution-phase object once route/run/verify tail has fewer direct scheduler dependencies.
 
+4n. **Task route planner**
+   - Implemented in `orchestrator/task_route_planner.py`.
+   - Owns canonical route construction for ordinary and World-enabled tasks, route override application, WorldPlan artifact persistence, and read-budget route projection for World plans.
+   - Patterns: Facade over router / WorldPlan / route override policy, Information Expert for route artifact shape.
+   - Scheduler now calls `route_planner.route_for_task(...)` directly during execution and no longer imports router or World route helpers.
+   - Tests: `tests/test_task_route_planner.py` plus existing scheduler and World tools coverage.
+   - Next: split retry-attempt sequencing or static risk/approval gating out of `_execute`.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.

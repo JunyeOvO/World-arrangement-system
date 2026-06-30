@@ -24,6 +24,7 @@ from .task_artifact_repair import TaskArtifactRepairService
 from .task_lifecycle import TaskLifecycleController
 from .task_outcome_recording import TaskOutcomeRecorder
 from .task_publish import TaskPublishRunner
+from .task_route_planner import TaskRoutePlanner
 from .project_commands import (
     handle_confirm_project_profile,
     handle_discover_projects,
@@ -36,16 +37,10 @@ from .project_commands import (
 )
 from .reviewer import run_codex_review
 from .risk_policy import evaluate_task
-from .router import plan_route
 from .read_only_completion import (
     read_only_result_can_finish as _read_only_result_can_finish,
     task_requires_diff as _task_requires_diff,
     task_requests_project_verification as _task_requests_project_verification,
-)
-from .task_routing import (
-    apply_route_override as _apply_route_override,
-    world_enabled as _world_enabled,
-    world_write_policy as _world_write_policy,
 )
 from .stale_worker_reaper import StaleWorkerReaper
 from .task_result_document import build_final_markdown as _final_md
@@ -109,6 +104,11 @@ class OrchestratorService:
             detect_project=self.detect_project,
             model_metrics_summary=self.db.model_metrics_summary,
             new_run_id=new_task_id,
+        )
+        self.route_planner = TaskRoutePlanner(
+            artifacts=self.artifacts,
+            model_metrics_summary=self.db.model_metrics_summary,
+            world_plan_factory=self.world_create_plan,
         )
         self.lifecycle = TaskLifecycleController(
             self.db,
@@ -565,7 +565,7 @@ class OrchestratorService:
         elif approval.mode == ApprovalMode.AUTO_WITH_SUMMARY:
             self._set_status(task_id, "AUTO_WITH_SUMMARY", "auto_with_summary", approval.to_dict())
 
-        route = self._route_for_task(task, project)
+        route = self.route_planner.route_for_task(task, project)
         route = apply_read_budget_to_route(route, task)
         self.artifacts.write_json(task_id, "route.json", route)
         self.db.update_task(
@@ -908,39 +908,6 @@ class OrchestratorService:
         if publish.pr_created:
             self._record_policy_learning(task, project, success=True, worker=route["selected_worker"],
                                          model=route["selected_model"], pr_created=True)
-
-    def _route_for_task(self, task: dict[str, Any], project: dict[str, Any]) -> dict[str, Any]:
-        """Return the canonical route for a task.
-
-        World-enabled projects must route through WorldPlan first so submit-task,
-        world-create-plan, and MCP entrypoints share the same decision source.
-        """
-        if _world_enabled(project):
-            plan_result = self.world_create_plan(
-                project["repo"],
-                task["user_goal"],
-                task.get("risk_level", "medium"),
-                _world_write_policy(project),
-            )
-            task_id = task["task_id"]
-            route = apply_read_budget_to_route(_apply_route_override(dict(plan_result["plan"]["route"]), task), task)
-            plan_result["plan"]["route"] = route
-            plan_result["plan"]["task_mode"] = task.get("task_mode")
-            plan_result["plan"]["expected_diff"] = task.get("expected_diff")
-            plan_result["plan"]["verification_policy"] = task.get("verification_policy")
-            plan_result["plan"]["read_budget_profile"] = task.get("read_budget_profile")
-            plan_result["plan"]["read_budget"] = task.get("read_budget")
-            self.artifacts.write_json(task_id, "world_plan.json", plan_result["plan"])
-            self.artifacts.write_json(
-                task_id,
-                "world_plan_ref.json",
-                {
-                    "plan_path": plan_result["plan_path"],
-                    "runtime_store": plan_result["runtime_store"],
-                },
-            )
-            return route
-        return _apply_route_override(plan_route(task, project, history=self.db.model_metrics_summary()).to_dict(), task)
 
     def _run_mimo_vision(self, task: dict[str, Any], dry_run: bool = False) -> dict[str, Any]:
         images = load_image_inputs(task.get("image_paths"), task.get("image_base64"))
