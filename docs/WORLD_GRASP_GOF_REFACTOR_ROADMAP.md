@@ -183,6 +183,22 @@ Pattern mapping:
 
 This is the main step toward making `scheduler.py` a workflow Controller instead of the owner of worker execution mechanics.
 
+## Slice 9 Implemented: Post-Attempt Decision Policy
+
+Moved post-attempt decisions into `orchestrator/post_attempt_policy.py`.
+
+New ownership:
+
+- `scheduler.py`: applies the returned decision to task lifecycle and policy learning.
+- `post_attempt_policy.py`: decides success, required-diff no-change failure, failed-worker-with-diff recovery, blocked/cancelled/non-retryable terminal handling, and retry payloads.
+
+Pattern mapping:
+
+- `decide_post_attempt(...)`: Strategy for interpreting an attempt result.
+- `PostAttemptDecision`: explicit command object consumed by scheduler.
+
+This separates "what the attempt result means" from "how the overall task workflow transitions".
+
 ## Verification
 
 Targeted tests:
@@ -197,7 +213,8 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
 1. **Worker attempt strategy**
    - Retry-chain planning extracted to `orchestrator/worker_attempts.py`.
    - Attempt execution mechanics extracted to `orchestrator/worker_attempt_executor.py`.
-   - Next: split post-attempt decision policy for retry/block/recover/no-diff from the scheduler loop.
+   - Post-attempt decision policy extracted to `orchestrator/post_attempt_policy.py`.
+   - Next: extract the full verify/review/publish tail from `_execute`.
    - Patterns: Strategy for retry attempts, Adapter for worker result normalization.
 
 1a. **Task routing policy**

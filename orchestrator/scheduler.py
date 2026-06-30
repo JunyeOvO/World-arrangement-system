@@ -18,7 +18,6 @@ from .failure_classifier import (
     FailureClassification,
     classify_review_failure,
     classify_verify_failure,
-    classify_worker_failure,
 )
 from .multimodal import load_image_inputs
 from .outcomes import derive_task_outcome
@@ -66,12 +65,11 @@ from .approval_memory import ApprovalMemory
 from .approval_explainer import explain_decision
 from .attempt_recording import AttemptMetricsRecorder
 from .policy_update_engine import PolicyUpdateEngine
+from .post_attempt_policy import decide_post_attempt
 from .process_control import request_cancel
 from .worker_permission_audit import WorkerPermissionAuditor
 from .worker_attempts import (
     build_retry_chain as _build_retry_chain,
-    is_retryable_failure as _is_retryable_failure,
-    should_recover_failed_worker_diff as _should_recover_failed_worker_diff,
 )
 from .worker_attempt_executor import WorkerAttemptExecutor
 from .worker_prompt import build_worker_prompt
@@ -863,90 +861,57 @@ class OrchestratorService:
                 last_failure = failure
                 last_attempt = attempt
 
-            if worker_result.status == "success":
-                if not dry_run and _task_requires_diff(task) and not worker_result.changed_files:
-                    worker_name = WORKERS.get(attempt["worker"], WORKERS["claude_code"]).name
-                    worker_result.status = "failed"
-                    worker_result.summary = f"{worker_name} completed without producing a diff"
-                    worker_result.risks.append("worker_no_diff")
-                    failure = classify_worker_failure(
-                        status=worker_result.status,
-                        summary=worker_result.summary,
-                        risks=worker_result.risks,
-                        changed_files=worker_result.changed_files,
-                        stdout_path=worker_result.stdout_path,
-                        stderr_path=worker_result.stderr_path,
-                    )
-                    last_failure = failure
-                    last_attempt = attempt
-                    self.artifacts.write_json(task_id, "result.json", worker_result.__dict__)
-                    self._write_attempt_metrics(task_id, idx + 1, attempt, worker_result, failure)
-                    self._set_status(
-                        task_id,
-                        "RETRYING" if idx + 1 < len(retry_chain) else "FAILED_FINAL",
-                        "worker_no_diff",
-                        {**worker_result.__dict__, "failure": failure.to_dict()},
-                    )
-                    if idx + 1 < len(retry_chain):
-                        continue
-                    self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], rollback=True)
-                    return
+            decision = decide_post_attempt(
+                task=task,
+                worker_result=worker_result,
+                failure=failure,
+                attempt=attempt,
+                attempt_index=idx,
+                retry_chain=retry_chain,
+                dry_run=dry_run,
+                worker_name=WORKERS.get(attempt["worker"], WORKERS["claude_code"]).name,
+            )
+
+            if decision.kind == "success":
                 final_result = worker_result
                 last_attempt = attempt
                 break
 
-            if _should_recover_failed_worker_diff(worker_result):
-                worker_result.risks.append("scheduler_recover_failed_worker_diff")
+            if decision.kind == "no_diff":
+                failure = decision.failure
+                last_failure = failure
+                last_attempt = attempt
                 self.artifacts.write_json(task_id, "result.json", worker_result.__dict__)
-                self._set_status(
-                    task_id,
-                    "EXECUTING",
-                    "worker_failed_with_diff",
-                    {**worker_result.__dict__, "failure": failure.to_dict() if failure else None},
-                )
+                self._write_attempt_metrics(task_id, idx + 1, attempt, worker_result, failure)
+                self._set_status(task_id, decision.status, decision.event_type, decision.payload or {})
+                if idx + 1 < len(retry_chain):
+                    continue
+                self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], rollback=True)
+                return
+
+            if decision.kind == "recover_failed_diff":
+                self.artifacts.write_json(task_id, "result.json", worker_result.__dict__)
+                self._set_status(task_id, decision.status, decision.event_type, decision.payload or {})
                 final_result = worker_result
                 last_attempt = attempt
                 break
 
-            if worker_result.status == "blocked":
-                # Non-retryable: safety violation, forbidden path, GLM rejection
-                self._set_status(
-                    task_id,
-                    "BLOCKED",
-                    "worker_blocked",
-                    {**worker_result.__dict__, "failure": failure.to_dict() if failure else None},
-                )
+            if decision.kind == "blocked":
+                self._set_status(task_id, decision.status, decision.event_type, decision.payload or {})
                 self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], incident=True)
                 return
 
-            # Retryable failure — try next in chain
-            if worker_result.status == "cancelled":
-                self._set_status(
-                    task_id,
-                    "CANCELLED",
-                    "worker_cancelled",
-                    {**worker_result.__dict__, "failure": failure.to_dict() if failure else None},
-                )
+            if decision.kind == "cancelled":
+                self._set_status(task_id, decision.status, decision.event_type, decision.payload or {})
                 return
 
-            if failure and not failure.retryable:
-                self._set_status(
-                    task_id,
-                    "FAILED_FINAL",
-                    "worker_non_retryable_failure",
-                    {"failure_reason": failure.failure_reason, "failure": failure.to_dict(), "attempt": idx + 1},
-                )
+            if decision.kind == "non_retryable_failure":
+                self._set_status(task_id, decision.status, decision.event_type, decision.payload or {})
                 self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], incident=True)
                 return
 
-            if idx + 1 < len(retry_chain):
-                next_attempt = retry_chain[idx + 1]
-                self._set_status(task_id, "RETRYING", "worker_retry", {
-                    "failed_attempt": idx + 1, "failed_worker": attempt["worker"],
-                    "next_worker": next_attempt["worker"], "next_model": next_attempt["model"],
-                    "reason": failure.failure_reason if failure else attempt.get("reason", "worker_failed"),
-                    "failure": failure.to_dict() if failure else None,
-                })
+            if decision.kind == "retry":
+                self._set_status(task_id, decision.status, decision.event_type, decision.payload or {})
                 continue
 
         # ── All attempts exhausted ──
