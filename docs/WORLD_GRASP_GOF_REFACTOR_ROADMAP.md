@@ -248,6 +248,23 @@ Pattern mapping:
 
 This further separates review policy from workflow transition handling.
 
+## Slice 13 Implemented: Task Publish Runner
+
+Moved PR/patch publishing, `publish.json` writing, PR URL persistence, and publish-status mapping into
+`orchestrator/task_publish.py`.
+
+New ownership:
+
+- `scheduler.py`: enters the publish phase and applies the returned publish outcome.
+- `task_publish.py`: calls the publish adapter, writes publish artifacts, updates PR URL, and maps adapter statuses to task lifecycle status/events.
+
+Pattern mapping:
+
+- `TaskPublishRunner`: Facade over publish adapter, artifact write, and DB PR URL update.
+- `TaskPublishOutcome`: explicit result object for lifecycle transition.
+
+This leaves scheduler with less publish-specific branching and keeps publishing behavior independently testable.
+
 ## Verification
 
 Targeted tests:
@@ -300,7 +317,11 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
 
 4c. **Task review runner**
    - Implemented in `orchestrator/task_review.py`.
-   - Next: extract publish tail and policy-learning recording.
+   - Next: extract policy-learning recording.
+
+4d. **Task publish runner**
+   - Implemented in `orchestrator/task_publish.py`.
+   - Next: extract policy-learning recording and remaining degraded/read-only terminal handlers.
 
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.

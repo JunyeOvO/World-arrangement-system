@@ -28,6 +28,7 @@ from .task_protocol import (
     normalize_task_protocol,
 )
 from .task_lifecycle import TaskLifecycleController
+from .task_publish import TaskPublishRunner
 from .project_commands import (
     handle_confirm_project_profile,
     handle_discover_projects,
@@ -120,6 +121,12 @@ class OrchestratorService:
         self.review_runner = TaskReviewRunner(
             review_func=run_codex_review,
             record_codex_usage=self._record_review_codex_usage,
+        )
+        self.publish_runner = TaskPublishRunner(
+            artifacts=self.artifacts,
+            db=self.db,
+            publish_func=create_pr_or_patch,
+            now=_now,
         )
 
     def list_projects(self, query: str | None = None) -> dict[str, Any]:
@@ -1143,27 +1150,17 @@ class OrchestratorService:
         final = _final_md(task, route, final_result.__dict__, verify_result.to_dict(), review)
         self.artifacts.write_text(task_id, "final.md", final)
 
-        allow_push = project.get("allow_remote_push", False)
-        publish_result = create_pr_or_patch(
-            Path(wt.path), wt.branch,
-            project.get("pr_base_branch", project.get("default_branch", "main")),
-            f"[ai-orchestrator] {task['user_goal'][:60]}",
-            Path(task["run_dir"]) / "final.md",
-            Path(task["run_dir"]) / "verify" / "diff.patch",
-            allow_remote_push=allow_push,
+        publish = self.publish_runner.run(
+            task_id=task_id,
+            task=task,
+            project=project,
+            worktree_path=Path(wt.path),
+            branch=wt.branch,
         )
-        self.artifacts.write_json(task_id, "publish.json", publish_result.__dict__)
-        if publish_result.status == "PR_CREATED":
-            self.db.update_task(task_id, pr_url=publish_result.pr_url, updated_at=_now())
-            self._set_status(task_id, "PR_CREATED", "pr_created", publish_result.__dict__)
+        self._set_status(task_id, publish.status, publish.event_type, publish.payload)
+        if publish.pr_created:
             self._record_policy_learning(task, project, success=True, worker=route["selected_worker"],
                                          model=route["selected_model"], pr_created=True)
-        elif publish_result.status == "COMPLETED_WITH_PATCH":
-            self._set_status(task_id, "COMPLETED_WITH_PATCH", "completed_with_patch", publish_result.__dict__)
-        elif publish_result.status == "COMPLETED_NO_CHANGES":
-            self._set_status(task_id, "COMPLETED_NO_CHANGES", "completed_no_changes", publish_result.__dict__)
-        else:
-            self._set_status(task_id, "DONE", "completed_without_publish", publish_result.__dict__)
 
     def _route_for_task(self, task: dict[str, Any], project: dict[str, Any]) -> dict[str, Any]:
         """Return the canonical route for a task.
