@@ -526,6 +526,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_read_only_salvage.py` plus scheduler, failure-classifier, worker-attempt, terminal-handler, stale-reaper, and artifact-repair coverage.
    - Next: run a focused `code_contract_audit` sample to confirm Round 3-style `silent_max_turns_no_output` now becomes `COMPLETED_WITH_PARTIAL_ARTIFACTS` when useful structured text exists.
 
+4ac. **Router history and cost strategy**
+   - Implemented in `orchestrator/router_history.py`.
+   - Owns route history normalization, model-cost estimates, budget eligibility, history-aware Claude model choice, and retry-chain cost estimation.
+   - `router_v3.py` keeps task-shape classification and route assembly, but delegates historical scoring and economics to the strategy module.
+   - Patterns: Strategy for history-aware model selection, Information Expert for route economics, Facade-preserving delegation from the router entrypoint.
+   - Tests: `tests/test_router_history.py` plus existing router v3 behavior tests.
+   - Next: split task-shape classification out of `router_v3.py` so route assembly, shape inference, and history economics each have direct ownership.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.

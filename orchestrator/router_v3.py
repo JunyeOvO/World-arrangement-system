@@ -5,6 +5,12 @@ from typing import Any
 
 from .agent_llm import agent_llm_name
 from .llm_capability import capability_profile, normalize_capability_tier
+from .router_history import (
+    choose_claude_model,
+    estimate_route_cost,
+    float_or_none,
+    normalize_history,
+)
 
 
 TASK_SHAPES = {
@@ -23,18 +29,6 @@ READ_ONLY_TASK_SHAPES = {
     "review_only",
     "multimodal_analysis",
 }
-
-_MODEL_COST_ESTIMATES = {
-    "deepseek_flash": 0.08,
-    "deepseek_pro": 0.30,
-    "mimo_v25": 0.20,
-    "mimo_v25_pro": 0.40,
-    "opencode-go/glm-5.2": 0.55,
-    "opencode_go_glm52": 0.55,
-}
-
-_MIN_HISTORY_ATTEMPTS = 3
-
 
 def classify_task_shape(task: dict[str, Any], features: Any | None = None, labels: Any | None = None) -> str:
     explicit = str(task.get("task_shape") or "").strip()
@@ -88,8 +82,8 @@ def apply_router_v3(
 ) -> dict[str, Any]:
     project = project or {}
     task_shape = classify_task_shape(task, features, labels)
-    history_basis = _normalize_history(history)
-    budget_cap = _float_or_none(task.get("budget_cap_usd") or project.get("budget_cap_usd"))
+    history_basis = normalize_history(history)
+    budget_cap = float_or_none(task.get("budget_cap_usd") or project.get("budget_cap_usd"))
     route = dict(route)
     if route.get("blocked"):
         route["task_shape"] = task_shape
@@ -114,7 +108,7 @@ def apply_router_v3(
     route["max_retries"] = max(0, len(retry_chain) - 1)
     route["escalation_policy"] = "opencode_on_failure" if any(s["worker"] == "opencode" for s in retry_chain[1:]) else route.get("escalation_policy", "codex_review_or_needs_user")
 
-    estimate = _estimate_route_cost(retry_chain)
+    estimate = estimate_route_cost(retry_chain)
     route["task_shape"] = task_shape
     route["budget_estimate_usd"] = estimate
     route["budget_cap_usd"] = budget_cap
@@ -161,7 +155,7 @@ def _select_for_shape(
         return _opencode("high")
 
     if task_shape == "docs_update":
-        model = _choose_claude_model(
+        model = choose_claude_model(
             history,
             ["deepseek_flash", "deepseek_pro"],
             default="deepseek_flash" if route.get("selected_model") == "deepseek_flash" else "deepseek_pro",
@@ -173,7 +167,7 @@ def _select_for_shape(
         return _claude("deepseek_pro", "high")
     if task_shape == "targeted_patch":
         if _single_file_target(task):
-            target_model = _choose_claude_model(
+            target_model = choose_claude_model(
                 history,
                 ["deepseek_flash", "deepseek_pro"],
                 default="deepseek_pro",
@@ -229,25 +223,6 @@ def _retry_chain_for_shape(task_shape: str, route: dict[str, Any]) -> list[dict[
     return [primary]
 
 
-def _normalize_history(history: list[dict[str, Any]] | dict[str, Any] | None) -> dict[str, Any]:
-    if not history:
-        return {}
-    if isinstance(history, dict):
-        result: dict[str, Any] = {}
-        for model, row in history.items():
-            if not isinstance(row, dict):
-                continue
-            result[str(model)] = _history_item(row, str(model))
-        return result
-    result: dict[str, Any] = {}
-    for row in history:
-        model = str(row.get("model") or "")
-        if not model:
-            continue
-        result[model] = _history_item(row, model)
-    return result
-
-
 def _reason(route: dict[str, Any], task_shape: str, history: dict[str, Any], budget_cap: float | None, estimate: float) -> str:
     selected_model = str(route.get("selected_model", ""))
     parts = [
@@ -279,14 +254,6 @@ def _reason(route: dict[str, Any], task_shape: str, history: dict[str, Any], bud
     if fallback:
         parts.append(f"fallback={fallback}")
     return "; ".join(parts)
-
-
-def _estimate_route_cost(chain: list[dict[str, Any]]) -> float:
-    total = 0.0
-    for idx, step in enumerate(chain):
-        multiplier = 1.0 if idx == 0 else 0.35
-        total += _MODEL_COST_ESTIMATES.get(str(step.get("model")), 0.30) * multiplier
-    return round(total, 4)
 
 
 def _fallback_models(chain: list[dict[str, Any]]) -> list[str]:
@@ -423,104 +390,6 @@ def _is_read_only_task(task: dict[str, Any]) -> bool:
 def _single_file_target(task: dict[str, Any]) -> bool:
     target_paths = task.get("target_paths") or []
     return isinstance(target_paths, list) and len(target_paths) == 1
-
-
-def _choose_claude_model(
-    history: dict[str, Any],
-    models: list[str],
-    default: str,
-    budget_cap: float | None,
-    allow_low_cost: bool,
-) -> str:
-    eligible = [model for model in models if _within_budget(model, budget_cap)]
-    if not eligible:
-        eligible = models[:]
-    reliable = {
-        model
-        for model in eligible
-        if _has_reliable_history(history.get(model))
-    }
-    if default in eligible and not reliable:
-        return default
-    if default not in eligible and not reliable:
-        return min(eligible, key=lambda model: _MODEL_COST_ESTIMATES.get(model, 0.30))
-    scored: dict[str, float] = {}
-    for model in eligible:
-        scored[model] = _history_model_score(history.get(model), model, allow_low_cost)
-    selected = max(eligible, key=lambda model: (scored[model], -_MODEL_COST_ESTIMATES.get(model, 0.30)))
-    if scored[selected] <= 0 and default in eligible:
-        selected = default
-    elif default in eligible and abs(scored[selected] - scored[default]) < 0.04:
-        selected = default
-    if history is not None:
-        history["_decision"] = {
-            "selected": selected,
-            "default": default,
-            "scores": {model: round(scored.get(model, 0.0), 3) for model in eligible},
-        }
-    return selected
-
-
-def _has_reliable_history(item: dict[str, Any] | None) -> bool:
-    if not item:
-        return False
-    success_rate = _float_or_none(item.get("success_rate"))
-    if success_rate is None:
-        return False
-    attempts = _int_or_none(item.get("attempts"))
-    return attempts is None or attempts >= _MIN_HISTORY_ATTEMPTS
-
-
-def _history_model_score(item: dict[str, Any] | None, model: str, allow_low_cost: bool) -> float:
-    base_cost = _MODEL_COST_ESTIMATES.get(model, 0.30)
-    cost_score = (1.0 / max(base_cost, 0.01)) * 0.01 if allow_low_cost else 0.0
-    if not item:
-        return 0.5 + cost_score
-    success_rate = _float_or_none(item.get("success_rate"))
-    if success_rate is None:
-        success_rate = 0.5
-    attempts = _int_or_none(item.get("attempts"))
-    if attempts is None:
-        evidence = 0.55
-    elif attempts <= 0:
-        evidence = 0.0
-    elif attempts < _MIN_HISTORY_ATTEMPTS:
-        evidence = 0.2
-    else:
-        evidence = min(1.0, attempts / 12.0)
-    avg_cost = _float_or_none(item.get("avg_cost"))
-    observed_cost_score = 0.0
-    if allow_low_cost and avg_cost is not None and avg_cost > 0:
-        observed_cost_score = min(0.18, 0.02 / avg_cost)
-    return (success_rate * evidence) + ((1.0 - evidence) * 0.5) + cost_score + observed_cost_score
-
-
-def _within_budget(model: str, budget_cap: float | None) -> bool:
-    return budget_cap is None or _MODEL_COST_ESTIMATES.get(model, 0.30) <= budget_cap
-
-
-def _float_or_none(value: Any) -> float | None:
-    try:
-        return None if value is None else float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _int_or_none(value: Any) -> int | None:
-    try:
-        return None if value is None else int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _history_item(row: dict[str, Any], model: str) -> dict[str, Any]:
-    return {
-        "success_rate": _float_or_none(row.get("success_rate")),
-        "avg_cost": _float_or_none(row.get("avg_cost_usd") if "avg_cost_usd" in row else row.get("avg_cost")),
-        "attempts": _int_or_none(row.get("attempts")),
-        "worker": row.get("worker"),
-        "model": model,
-    }
 
 
 def _has_phrase(text: str, phrases: list[str]) -> bool:
