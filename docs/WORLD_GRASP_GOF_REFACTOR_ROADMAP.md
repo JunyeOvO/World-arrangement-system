@@ -382,6 +382,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_codex_usage_recording.py`.
    - Next: split World setup / world-plan creation out of scheduler or extract task submission construction.
 
+4k. **World runtime service**
+   - Implemented in `orchestrator/world_runtime_service.py`.
+   - Owns external RuntimeStore bootstrap, World project profile wrapper, WorldPlan creation, World runtime doctor, and plan-route/safe-parallelism helpers.
+   - Patterns: Facade over World setup/planning operations, Strategy injection for profiling, project detection, metrics history, and run-id generation.
+   - Scheduler now exposes the same public CLI/MCP methods but delegates the implementation to `WorldRuntimeService`.
+   - Tests: `tests/test_world_runtime_service.py` plus existing `test_world_tools.py` and `test_world_cli.py`.
+   - Next: extract task submission construction or current-project submission lookup.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.

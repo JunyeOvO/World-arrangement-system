@@ -10,7 +10,6 @@ from .artifacts import ArtifactStore
 from .baselines import build_manual_baseline, build_replay_baseline
 from .codex_usage_recording import CodexUsageRecorder
 from .config import ensure_runtime_dirs
-from .constants import DEFAULT_CLAUDE_CMD, DEFAULT_OPENCODE_CMD
 from .db import TaskDB
 from .failure_classifier import (
     FailureClassification,
@@ -45,7 +44,6 @@ from .read_only_completion import (
     task_requires_diff as _task_requires_diff,
     task_requests_project_verification as _task_requests_project_verification,
 )
-from .runtime_store import RuntimeStore
 from .task_routing import (
     apply_route_override as _apply_route_override,
     world_enabled as _world_enabled,
@@ -73,6 +71,7 @@ from .worker_attempts import (
 )
 from .worker_attempt_executor import WorkerAttemptExecutor
 from .worker_prompt import build_worker_prompt
+from .world_runtime_service import WorldRuntimeService
 from .workers.claude_code_worker import ClaudeCodeWorker
 from .workers.mimo_vision_adapter import MimoVisionAdapter
 from .workers.opencode_worker import OpenCodeWorker
@@ -106,6 +105,12 @@ class OrchestratorService:
             db=self.db,
             artifacts=self.artifacts,
             write_token_ledger=self.attempt_metrics.write_token_ledger,
+        )
+        self.world_runtime = WorldRuntimeService(
+            profile_project=self.profile_project,
+            detect_project=self.detect_project,
+            model_metrics_summary=self.db.model_metrics_summary,
+            new_run_id=new_task_id,
         )
         self.lifecycle = TaskLifecycleController(
             self.db,
@@ -179,36 +184,11 @@ class OrchestratorService:
         user_prompt: str = "本项目开发使用 World 系统",
         preferred_write_policy: str = "zero_write",
     ) -> dict[str, Any]:
-        """Bootstrap World for a repo without writing World core files into it."""
-        store = RuntimeStore(repo_path, preferred_write_policy)  # type: ignore[arg-type]
-        profile = self.profile_project(repo_path, force=False)
-        detected = self.detect_project(repo_path=repo_path)
-        orchestrator_project_id = detected.get("project_id")
-        profile_payload = {
-            "project_id": orchestrator_project_id,
-            "runtime_id": store.project_id,
-            "repo_path": str(Path(repo_path).expanduser().resolve()),
-            "user_prompt": user_prompt,
-            "profile": profile,
-            "write_policy": preferred_write_policy,
-            "world_runtime_mode": store.backend,
-        }
-        profile_path = store.write_project_profile(profile_payload)
-        return {
-            "world_enabled": True,
-            "write_policy": preferred_write_policy,
-            "runtime_backend": store.backend,
-            "runtime_store": str(store.project_dir),
-            "project_id": orchestrator_project_id,
-            "runtime_id": store.project_id,
-            "detect": detected,
-            "project_profile_path": str(profile_path),
-            "next_tool": "world_profile_project",
-        }
+        return self.world_runtime.bootstrap(repo_path, user_prompt, preferred_write_policy)
 
     def world_profile_project(self, repo_path: str, force: bool = False) -> dict[str, Any]:
         """World-named wrapper around the adaptive project profiler."""
-        return self.profile_project(repo_path, force)
+        return self.world_runtime.profile(repo_path, force)
 
     def world_create_plan(
         self,
@@ -217,64 +197,10 @@ class OrchestratorService:
         risk_level: str = "medium",
         preferred_write_policy: str = "zero_write",
     ) -> dict[str, Any]:
-        """Create a WorldPlan and write it to the external RuntimeStore."""
-        store = RuntimeStore(repo_path, preferred_write_policy)  # type: ignore[arg-type]
-        run_id = new_task_id().replace("t_", "world_", 1)
-        profile = self.profile_project(repo_path, force=False)
-        project = {
-            "project_id": store.project_id,
-            "repo": str(Path(repo_path).expanduser().resolve()),
-            "stack": profile.get("profile", {}).get("detected_types", []) if isinstance(profile, dict) else [],
-            "test_commands": profile.get("profile", {}).get("test_commands", []) if isinstance(profile, dict) else [],
-            "build_commands": profile.get("profile", {}).get("build_commands", []) if isinstance(profile, dict) else [],
-            "default_worker": "claude_code",
-            "default_model": "deepseek_pro",
-        }
-        route = self._build_world_plan_route(user_goal, risk_level, project)
-        plan = {
-            "run_id": run_id,
-            "project_id": store.project_id,
-            "repo_path": str(Path(repo_path).expanduser().resolve()),
-            "user_goal": user_goal,
-            "risk_level": risk_level,
-            "write_policy": preferred_write_policy,
-            "runtime_backend": store.backend,
-            "route": route,
-            "safe_parallelism": _safe_parallelism_from_profile(profile),
-            "worker_required": True,
-            "final_review": "World Review",
-        }
-        plan_path = store.write_plan(run_id, plan)
-        return {"plan": plan, "plan_path": str(plan_path), "runtime_store": str(store.project_dir)}
+        return self.world_runtime.create_plan(repo_path, user_goal, risk_level, preferred_write_policy)
 
     def world_doctor(self, repo_path: str | None = None) -> dict[str, Any]:
-        """World health check for RuntimeStore and worker command availability."""
-        from .command_utils import command_available
-
-        checks: list[dict[str, Any]] = []
-        for label, command in {
-            "git": "git",
-            "claude": __import__("os").environ.get("AI_CLAUDE_CMD", DEFAULT_CLAUDE_CMD),
-            "opencode": __import__("os").environ.get("AI_OPENCODE_CMD", DEFAULT_OPENCODE_CMD),
-        }.items():
-            ok, detail = command_available(command)
-            checks.append({"name": f"{label} available", "ok": ok, "detail": detail})
-
-        runtime: dict[str, Any] | None = None
-        if repo_path:
-            try:
-                store = RuntimeStore(repo_path, "zero_write")
-                runtime = {
-                    "project_id": store.project_id,
-                    "backend": store.backend,
-                    "project_dir": str(store.project_dir),
-                }
-                checks.append({"name": "RuntimeStore available", "ok": True, "detail": str(store.project_dir)})
-            except Exception as exc:
-                checks.append({"name": "RuntimeStore available", "ok": False, "detail": str(exc)})
-
-        status = "healthy" if all(c["ok"] for c in checks if c["name"] in {"git available", "RuntimeStore available"}) else "degraded"
-        return {"status": status, "checks": checks, "runtime": runtime}
+        return self.world_runtime.doctor(repo_path)
 
     def submit_current_project_task(
         self,
@@ -1073,13 +999,6 @@ class OrchestratorService:
         )
         return observation.to_dict()
 
-    def _build_world_plan_route(self, user_goal: str, risk_level: str, project: dict[str, Any]) -> dict[str, Any]:
-        return plan_route(
-            {"user_goal": user_goal, "risk_level": risk_level},
-            project,
-            history=self.db.model_metrics_summary(),
-        ).to_dict()
-
     def _record_policy_learning(
         self, task: dict[str, Any], project: dict[str, Any], success: bool,
         worker: str = "", model: str = "", variant: str = "",
@@ -1188,25 +1107,6 @@ def _read_json_if_exists(path: Path) -> dict[str, Any] | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {"unreadable": str(path)}
-
-
-def _safe_parallelism_from_profile(profile: dict[str, Any]) -> int:
-    """Extract safe_parallelism from profiler output with conservative fallback."""
-    if not isinstance(profile, dict):
-        return 1
-    nested = profile.get("profile")
-    if isinstance(nested, dict) and isinstance(nested.get("safe_parallelism"), int):
-        return max(1, int(nested["safe_parallelism"]))
-    if isinstance(profile.get("safe_parallelism"), int):
-        return max(1, int(profile["safe_parallelism"]))
-    detected = []
-    if isinstance(nested, dict):
-        detected = [str(x).lower() for x in nested.get("detected_types", [])]
-    if any(x in detected for x in ["unity", "android_gradle", "java"]):
-        return 1
-    if any(x in detected for x in ["node", "react", "vite", "python"]):
-        return 2
-    return 1
 
 
 def _worker_prompt(task: dict[str, Any], route: dict[str, Any]) -> str:
