@@ -65,6 +65,7 @@ from .approval_graph import ApprovalGraph, ApprovalMode, _classify_task_type
 from .approval_memory import ApprovalMemory
 from .approval_explainer import explain_decision
 from .attempt_recording import AttemptMetricsRecorder
+from .policy_learning import PolicyLearningRecorder
 from .policy_update_engine import PolicyUpdateEngine
 from .post_attempt_policy import decide_post_attempt
 from .process_control import request_cancel
@@ -128,6 +129,7 @@ class OrchestratorService:
             publish_func=create_pr_or_patch,
             now=_now,
         )
+        self.policy_learning = PolicyLearningRecorder(self.db)
 
     def list_projects(self, query: str | None = None) -> dict[str, Any]:
         projects = load_projects()
@@ -1222,23 +1224,19 @@ class OrchestratorService:
         pr_created: bool = False, rollback: bool = False, incident: bool = False,
         changed_paths: list[str] | None = None,
     ) -> None:
-        """Record task outcome for policy learning (only from real results)."""
-        engine = PolicyUpdateEngine(self.db)
-        engine.on_task_complete(
-            task_id=task["task_id"],
-            project_id=task["project_id"],
-            task_type=task.get("task_type", "routine_coding"),
-            risk_level=task.get("risk_level", "medium"),
-            approval_mode=task.get("status", "UNKNOWN"),
-            worker=worker, model=model, variant=variant,
-            planned_files_count=len(changed_paths or []),
-            actual_files_count=len(changed_paths or []),
-            changed_paths=changed_paths or [],
+        self.policy_learning.record_task_completion(
+            task,
+            project,
+            success,
+            worker=worker,
+            model=model,
+            variant=variant,
             tests_passed=tests_passed,
             codex_review_approved=codex_review_approved,
             pr_created=pr_created,
             rollback=rollback,
             incident=incident,
+            changed_paths=changed_paths,
         )
 
     def _set_status(self, task_id: str, status: str, event_type: str, payload: dict[str, Any]) -> None:

@@ -265,6 +265,21 @@ Pattern mapping:
 
 This leaves scheduler with less publish-specific branching and keeps publishing behavior independently testable.
 
+## Slice 14 Implemented: Policy Learning Recorder
+
+Moved task-completion policy learning recording into `orchestrator/policy_learning.py`.
+
+New ownership:
+
+- `scheduler.py`: signals policy learning with task/project context and outcome facts.
+- `policy_learning.py`: adapts scheduler outcome facts into `PolicyUpdateEngine.on_task_complete(...)`.
+
+Pattern mapping:
+
+- `PolicyLearningRecorder`: Adapter/Facade over the policy update engine.
+
+This keeps learned-policy persistence behind a direct test boundary while preserving scheduler compatibility wrappers.
+
 ## Verification
 
 Targeted tests:
@@ -321,7 +336,11 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
 
 4d. **Task publish runner**
    - Implemented in `orchestrator/task_publish.py`.
-   - Next: extract policy-learning recording and remaining degraded/read-only terminal handlers.
+   - Next: extract remaining degraded/read-only terminal handlers.
+
+4e. **Policy learning recorder**
+   - Implemented in `orchestrator/policy_learning.py`.
+   - Next: collapse remaining scheduler wrappers once call sites are simplified.
 
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
