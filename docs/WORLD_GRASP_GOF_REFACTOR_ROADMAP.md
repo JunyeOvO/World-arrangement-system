@@ -470,6 +470,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_project_lookup_service.py` plus existing project registry and CLI coverage.
    - Next: extract task submission persistence so scheduler no longer creates task DB rows and dispatch usage events directly.
 
+4v. **Task submission service**
+   - Implemented in `orchestrator/task_submission_service.py`.
+   - Owns project lookup for submission, task id/run dir allocation, submission payload persistence, task DB row creation, created events, and Codex planning-dispatch usage recording.
+   - Patterns: Controller for submit-task workflow, Facade over builder / DB / artifact / usage side effects.
+   - Scheduler delegates `submit_task(...)` and only supplies execution/status callbacks to keep the public API compatible.
+   - Tests: `tests/test_task_submission_service.py` plus existing task submission, scheduler, CLI, and World coverage.
+   - Next: extract current-project submission detection or reduce `_execute` further if scheduler remains above target size.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.

@@ -10,7 +10,7 @@ from .codex_usage_recording import CodexUsageRecorder
 from .config import ensure_runtime_dirs
 from .db import TaskDB
 from .pr import create_pr_or_patch
-from .project_registry import detect_project, load_projects
+from .project_registry import detect_project
 from .project_command_service import ProjectCommandService
 from .project_lookup_service import ProjectLookupService
 from .task_protocol import (
@@ -33,6 +33,7 @@ from .task_attempt_runner import TaskAttemptRunner
 from .task_preparation import TaskPreparationService
 from .task_review import TaskReviewRunner
 from .task_submission import TaskSubmissionBuilder
+from .task_submission_service import TaskSubmissionService
 from .task_operations import TaskOperationsService
 from .terminal_handlers import TerminalTaskHandler
 from .task_verification import TaskVerificationRunner
@@ -161,6 +162,16 @@ class OrchestratorService:
             artifacts=self.artifacts,
             approval_policy=self.approval_policy,
         )
+        self.task_submission = TaskSubmissionService(
+            db=self.db,
+            artifacts=self.artifacts,
+            submission_builder=self.submission_builder,
+            codex_usage=self.codex_usage,
+            new_task_id=new_task_id,
+            now=_now,
+            execute_task=self._execute,
+            get_task_status=self.get_task_status,
+        )
         self.task_operations = TaskOperationsService(
             db=self.db,
             artifacts=self.artifacts,
@@ -257,69 +268,24 @@ class OrchestratorService:
         read_budget_profile: str | None = None,
         read_budget: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        projects = load_projects()
-        if project_id not in projects:
-            return {"status": "NEEDS_USER", "message": f"unknown project_id: {project_id}"}
-        project = projects[project_id]
-        task_id = new_task_id()
-        run_dir = self.artifacts.run_dir(task_id)
-        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        submission = self.submission_builder.build(
-            task_id=task_id,
-            run_dir=run_dir,
-            now=now,
-            project_id=project_id,
-            project=project,
-            user_goal=user_goal,
-            risk_level=risk_level,
-            auto_execute=auto_execute,
-            auto_pr=auto_pr,
-            force_worker=force_worker,
-            force_model=force_model,
-            force_variant=force_variant,
-            image_paths=image_paths,
-            image_base64=image_base64,
-            task_mode=task_mode,
-            expected_diff=expected_diff,
-            verification_policy=verification_policy,
-            read_budget_profile=read_budget_profile,
-            read_budget=read_budget,
+        return self.task_submission.submit_task(
+            project_id,
+            user_goal,
+            risk_level,
+            auto_execute,
+            auto_pr,
+            dry_run,
+            force_worker,
+            force_model,
+            force_variant,
+            image_paths,
+            image_base64,
+            task_mode,
+            expected_diff,
+            verification_policy,
+            read_budget_profile,
+            read_budget,
         )
-        task = submission.task
-        self.db.create_task(
-            {
-                "task_id": task_id,
-                "project_id": project_id,
-                "repo_path": project["repo"],
-                "user_goal": user_goal,
-                "status": "QUEUED",
-                "created_at": now,
-                "updated_at": now,
-                "run_dir": str(run_dir),
-            }
-        )
-        self.db.append_event(task_id, "created", None, "QUEUED", {"dry_run": dry_run})
-        self.artifacts.write_json(task_id, "task.json", task)
-        self.codex_usage.record_planning_dispatch(
-            task_id=task_id,
-            project_id=project_id,
-            repo_path=project["repo"],
-            user_goal=user_goal,
-            risk_level=risk_level,
-            auto_execute=auto_execute,
-            auto_pr=task["auto_pr"],
-            dry_run=dry_run,
-            force_worker=force_worker,
-            force_model=force_model,
-            force_variant=force_variant,
-            has_images=bool(image_paths or image_base64),
-            protocol=submission.protocol,
-            project_memory=submission.project_memory,
-            run_dir=str(run_dir),
-        )
-        if auto_execute:
-            self._execute(task, project, dry_run=dry_run)
-        return {"task_id": task_id, "status": self.get_task_status(task_id)["status"], "run_dir": str(run_dir)}
 
     def get_task_status(self, task_id: str) -> dict[str, Any]:
         return self.task_operations.get_task_status(task_id)
