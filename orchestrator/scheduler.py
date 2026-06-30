@@ -24,6 +24,7 @@ from .task_protocol import (
     apply_read_budget_to_route,
     normalize_task_protocol,
 )
+from .task_artifact_repair import TaskArtifactRepairService
 from .task_lifecycle import TaskLifecycleController
 from .task_publish import TaskPublishRunner
 from .project_commands import (
@@ -40,7 +41,6 @@ from .reviewer import run_codex_review
 from .risk_policy import evaluate_task
 from .router import plan_route
 from .read_only_completion import (
-    extract_worker_success_text as _extract_worker_success_text,
     read_only_result_can_finish as _read_only_result_can_finish,
     task_requires_diff as _task_requires_diff,
     task_requests_project_verification as _task_requests_project_verification,
@@ -96,10 +96,15 @@ class OrchestratorService:
         self.artifacts = ArtifactStore(self.paths.runs)
         self.attempt_metrics = AttemptMetricsRecorder(self.db)
         self.permission_auditor = WorkerPermissionAuditor(self.db)
+        self.artifact_repair = TaskArtifactRepairService(
+            db=self.db,
+            artifacts=self.artifacts,
+            metrics_recorder=self.attempt_metrics,
+        )
         self.lifecycle = TaskLifecycleController(
             self.db,
             now=_now,
-            sync_task_artifact=self._sync_task_artifact_from_db,
+            sync_task_artifact=self.artifact_repair.sync_task_artifact_from_db,
             record_task_outcome=self._record_task_outcome,
         )
         self.attempt_executor = WorkerAttemptExecutor(
@@ -541,35 +546,7 @@ class OrchestratorService:
         )
 
     def repair_task_artifacts(self, task_id: str | None = None, limit: int = 200) -> dict[str, Any]:
-        """Repair run artifacts that drifted from DB state or worker output.
-
-        This is intentionally conservative: it does not infer new task states.
-        It only mirrors the current DB task row into task.json and, for completed
-        OpenCode runs, backfills the final assistant text from worker.stdout.jsonl
-        when result.json/final.md only contain the generic completion marker.
-        """
-        if task_id:
-            task = self.db.get_task(task_id)
-            tasks = [task] if task else []
-        else:
-            tasks = self.db.list_tasks(limit=limit)
-        repaired: list[dict[str, Any]] = []
-        for task in tasks:
-            if not task:
-                continue
-            changes: list[str] = []
-            if self._sync_task_artifact_from_db(task["task_id"]):
-                changes.append("task_json_synced")
-            if self._repair_worker_result_artifacts(task):
-                changes.append("worker_result_backfilled")
-            if changes:
-                repaired.append({"task_id": task["task_id"], "changes": changes})
-        return {
-            "status": "ok",
-            "scope": task_id or f"recent:{max(1, min(int(limit), 500))}",
-            "repaired_count": len(repaired),
-            "repaired": repaired,
-        }
+        return self.artifact_repair.repair_task_artifacts(task_id, limit)
 
     def open_task_artifacts(self, task_id: str) -> dict[str, Any]:
         task = self.db.get_task(task_id)
@@ -1211,66 +1188,6 @@ class OrchestratorService:
         )
         self.db.upsert_task_outcome(outcome)
         self.artifacts.write_json(task_id, "outcome.json", outcome)
-
-    def _sync_task_artifact_from_db(self, task_id: str) -> bool:
-        task = self.db.get_task(task_id)
-        if not task:
-            return False
-        task_path = Path(str(task.get("run_dir") or "")) / "task.json"
-        if not task_path.exists():
-            return False
-        payload = _read_json_if_exists(task_path)
-        if not isinstance(payload, dict):
-            return False
-        changed = False
-        for key in (
-            "status",
-            "updated_at",
-            "route_worker",
-            "route_model",
-            "route_variant",
-            "pr_url",
-        ):
-            value = task.get(key)
-            if value is not None and payload.get(key) != value:
-                payload[key] = value
-                changed = True
-        if changed:
-            self.artifacts.write_json(task_id, "task.json", payload)
-        return changed
-
-    def _repair_worker_result_artifacts(self, task: dict[str, Any]) -> bool:
-        if str(task.get("route_worker") or "") != "opencode":
-            return False
-        run_dir = Path(str(task.get("run_dir") or ""))
-        result_path = run_dir / "result.json"
-        result = _read_json_if_exists(result_path)
-        if not isinstance(result, dict):
-            return False
-        stdout_path = Path(str(result.get("stdout_path") or run_dir / "worker" / "worker.stdout.jsonl"))
-        summary = _extract_worker_success_text(stdout_path)
-        if not summary:
-            return False
-        current_summary = str(result.get("summary") or "")
-        generic_summary = current_summary.strip() in {"", "OpenCode worker finished", "OpenCode worker failed"}
-        if not generic_summary:
-            return False
-        result["summary"] = summary
-        self.artifacts.write_json(task["task_id"], "result.json", result)
-        attempt_result = run_dir / "attempts" / "01" / "result.json"
-        attempt_payload = _read_json_if_exists(attempt_result)
-        if isinstance(attempt_payload, dict):
-            attempt_payload["summary"] = summary
-            self.artifacts.write_json(task["task_id"], "attempts/01/result.json", attempt_payload)
-        route = _read_json_if_exists(run_dir / "route.json") or {
-            "selected_worker": task.get("route_worker") or "opencode",
-            "selected_model": task.get("route_model") or "opencode_go_glm52",
-        }
-        verify = _read_json_if_exists(run_dir / "verify" / "verify.json") or {}
-        review = _read_json_if_exists(run_dir / "review" / "review.json") or {}
-        self.artifacts.write_text(task["task_id"], "final.md", _final_md(task, route, result, verify, review))
-        self.attempt_metrics.write_repaired_result_metrics(task, result, stdout_path, verify, review)
-        return True
 
     def _check_worker_declared_permissions(self, task_id: str, worker_name: str, task: dict[str, Any]) -> dict[str, Any]:
         return self.permission_auditor.check_declared_permissions(task_id, worker_name, task)

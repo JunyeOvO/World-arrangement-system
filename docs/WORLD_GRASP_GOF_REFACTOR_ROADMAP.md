@@ -358,6 +358,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_stale_worker_reaper.py` plus existing scheduler reaper integration test.
    - Next: extract task artifact repair into a repair service if repair logic continues to grow.
 
+4h. **Task artifact repair service**
+   - Implemented in `orchestrator/task_artifact_repair.py`.
+   - Owns conservative repair for DB-to-`task.json` sync and OpenCode generic-summary backfill from worker stream artifacts.
+   - Patterns: Information Expert for repairable artifact drift, Facade over artifact writes and repaired metrics refresh.
+   - Scheduler now delegates `repair_task_artifacts(...)` and lifecycle task-artifact syncing to this service.
+   - Tests: `tests/test_task_artifact_repair.py` plus existing scheduler repair integration test.
+   - Next: extract outcome recording if outcome derivation needs more artifact IO or quality-matrix policy.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.
