@@ -16,11 +16,9 @@ from .failure_classifier import (
 )
 from .multimodal import load_image_inputs
 from .pr import create_pr_or_patch
-from .project_memory import ensure_project_memory
 from .project_registry import detect_project, load_projects
 from .task_protocol import (
     apply_read_budget_to_route,
-    normalize_task_protocol,
 )
 from .task_artifact_repair import TaskArtifactRepairService
 from .task_lifecycle import TaskLifecycleController
@@ -52,6 +50,7 @@ from .task_routing import (
 from .stale_worker_reaper import StaleWorkerReaper
 from .task_result_document import build_final_markdown as _final_md
 from .task_review import TaskReviewRunner
+from .task_submission import TaskSubmissionBuilder
 from .terminal_handlers import TerminalTaskHandler
 from .task_verification import TaskVerificationRunner
 from .verifier import verify
@@ -95,6 +94,7 @@ class OrchestratorService:
         self.artifacts = ArtifactStore(self.paths.runs)
         self.attempt_metrics = AttemptMetricsRecorder(self.db)
         self.permission_auditor = WorkerPermissionAuditor(self.db)
+        self.submission_builder = TaskSubmissionBuilder()
         self.artifact_repair = TaskArtifactRepairService(
             db=self.db,
             artifacts=self.artifacts,
@@ -263,42 +263,28 @@ class OrchestratorService:
         task_id = new_task_id()
         run_dir = self.artifacts.run_dir(task_id)
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        protocol = normalize_task_protocol(
-            user_goal,
+        submission = self.submission_builder.build(
+            task_id=task_id,
+            run_dir=run_dir,
+            now=now,
+            project_id=project_id,
+            project=project,
+            user_goal=user_goal,
+            risk_level=risk_level,
+            auto_execute=auto_execute,
+            auto_pr=auto_pr,
+            force_worker=force_worker,
+            force_model=force_model,
+            force_variant=force_variant,
+            image_paths=image_paths,
+            image_base64=image_base64,
             task_mode=task_mode,
             expected_diff=expected_diff,
             verification_policy=verification_policy,
             read_budget_profile=read_budget_profile,
             read_budget=read_budget,
         )
-        memory_payload = ensure_project_memory(project_id, project)
-        task = {
-            "task_id": task_id,
-            "project_id": project_id,
-            "repo_path": project["repo"],
-            "user_goal": user_goal,
-            "risk_level": risk_level,
-            "auto_execute": auto_execute,
-            "auto_pr": bool(auto_pr and project.get("allow_auto_pr", False)),
-            "auto_merge": False,
-            "status": "QUEUED",
-            "created_at": now,
-            "updated_at": now,
-            "run_dir": str(run_dir),
-            "test_commands": project.get("test_commands", []),
-            "build_commands": project.get("build_commands", []),
-            "forbidden_paths": project.get("forbidden_paths", []),
-            "image_paths": image_paths or [],
-            "image_base64": image_base64 or [],
-            "project_memory": memory_payload,
-            **protocol,
-        }
-        if force_worker or force_model or force_variant:
-            task["route_override"] = {
-                "worker": force_worker,
-                "model": force_model,
-                "variant": force_variant,
-            }
+        task = submission.task
         self.db.create_task(
             {
                 "task_id": task_id,
@@ -326,8 +312,8 @@ class OrchestratorService:
             force_model=force_model,
             force_variant=force_variant,
             has_images=bool(image_paths or image_base64),
-            protocol=protocol,
-            project_memory=memory_payload,
+            protocol=submission.protocol,
+            project_memory=submission.project_memory,
             run_dir=str(run_dir),
         )
         if auto_execute:

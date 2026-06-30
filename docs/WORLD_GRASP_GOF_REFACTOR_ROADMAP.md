@@ -390,6 +390,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_world_runtime_service.py` plus existing `test_world_tools.py` and `test_world_cli.py`.
    - Next: extract task submission construction or current-project submission lookup.
 
+4l. **Task submission builder**
+   - Implemented in `orchestrator/task_submission.py`.
+   - Owns normalized task payload construction, execution protocol normalization, project-memory injection, image defaults, auto-PR policy, and route override shape.
+   - Patterns: Builder for task construction, Information Expert for submission payload consistency.
+   - Scheduler now creates task IDs/run dirs and persists the returned task, but no longer assembles the task dictionary inline.
+   - Tests: `tests/test_task_submission.py`.
+   - Next: consider extracting current-project detection and submit facade if `submit_current_project_task` grows more policy.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.
