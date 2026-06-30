@@ -28,6 +28,33 @@ def test_classifies_max_turns_with_diff(tmp_path):
     assert result.recommended_action == "verify_partial_patch"
 
 
+def test_classifies_ignored_early_output_marker(tmp_path):
+    stream = tmp_path / "worker.stream.jsonl"
+    stream.write_text(
+        "\n".join([
+            json.dumps({
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "I have enough data to compile the contract audit. Let me verify one more detail.",
+                        }
+                    ]
+                },
+            }),
+            json.dumps({"type": "result", "subtype": "error_max_turns"}),
+        ]) + "\n",
+        encoding="utf-8",
+    )
+
+    result = classify_worker_failure(status="failed", stdout_path=str(stream), changed_files=[])
+
+    assert result.failure_reason == "worker_ignored_early_output"
+    assert result.recommended_action == "enforce_partial_result_template"
+    assert "stream_marker=enough_data_without_final" in result.evidence
+
+
 def test_classifies_auth_and_command_errors():
     auth = classify_worker_failure(status="failed", summary="401 unauthorized")
     missing = classify_worker_failure(status="failed", summary="program not found")

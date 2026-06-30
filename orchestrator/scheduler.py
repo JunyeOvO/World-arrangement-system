@@ -2234,6 +2234,7 @@ def _worker_prompt(task: dict[str, Any], route: dict[str, Any]) -> str:
             "If you are near the turn or time limit, stop exploring and return the best current answer with "
             "changed_files=[] instead of making more tool calls.\n"
         )
+    required_output = _read_only_required_output_contract(task)
     profile_strategy = _worker_profile_strategy(task)
     project_memory = _project_memory_section(task)
     task_section = (
@@ -2254,6 +2255,7 @@ def _worker_prompt(task: dict[str, Any], route: dict[str, Any]) -> str:
         "World Core will run the listed verification commands after you return; do not spend many turns on full-suite testing.\n"
         "Respect the task mode, expected diff, verification policy, and read budget before exploring more files.\n"
         f"{read_only_completion_rule}"
+        f"{required_output}"
         f"{project_memory}"
         f"{profile_strategy}"
         "Return changed_files, summary, test_suggestions, risks, needs_user."
@@ -2286,6 +2288,66 @@ def _project_memory_section(task: dict[str, Any]) -> str:
         return ""
     prompt = payload.get("prompt")
     return str(prompt) if isinstance(prompt, str) else ""
+
+
+def _read_only_required_output_contract(task: dict[str, Any]) -> str:
+    if _task_requires_diff(task):
+        return ""
+    profile = str(task.get("read_budget_profile") or "quick_triage").strip().lower()
+    budget = task.get("read_budget") if isinstance(task.get("read_budget"), dict) else {}
+    max_turns = budget.get("max_worker_turns") or "the configured"
+    if profile == "code_contract_audit":
+        body = (
+            "- suspected_contract: <the data/API contract under review>\n"
+            "- producer: <file/function or unknown>\n"
+            "- consumer: <file/function or unknown>\n"
+            "- mismatch_risk: <none/low/medium/high plus reason>\n"
+            "- evidence_files: <1-5 paths already read>\n"
+            "- conclusion: <current answer, partial is acceptable>\n"
+            "- next_step: <single bounded next action>\n"
+        )
+    elif profile == "docs_review":
+        body = (
+            "- audience: <developer/user/operator>\n"
+            "- scorecard: <setup/test/usage/architecture status>\n"
+            "- gaps: <highest priority gaps>\n"
+            "- evidence_files: <1-5 paths already read>\n"
+            "- conclusion: <current answer, partial is acceptable>\n"
+            "- next_step: <single bounded next action>\n"
+        )
+    elif profile == "next_task_planning":
+        body = (
+            "- candidate: <one high-confidence task is enough>\n"
+            "- target_files: <likely files>\n"
+            "- acceptance_criteria: <how Codex/user verifies it>\n"
+            "- risk: <low/medium/high plus reason>\n"
+            "- recommended_route: <worker/model/profile>\n"
+            "- conclusion: <current answer, partial is acceptable>\n"
+        )
+    else:
+        body = (
+            "- conclusion: <current best answer, partial is acceptable>\n"
+            "- evidence_files: <1-5 paths already read>\n"
+            "- risks: <key risks or unknowns>\n"
+            "- next_step: <single bounded next action>\n"
+        )
+    return (
+        "\nRequired read-only output contract:\n"
+        "- Before making any broad search or extra file read, keep this exact result template ready.\n"
+        f"- You have at most {max_turns} worker turns; do not spend the final allowed turn on another Read/List/Search.\n"
+        "- If you think 'I have enough data', immediately return the template instead of verifying one more detail.\n"
+        "- If evidence is incomplete, still return a partial result; do not fail silently.\n"
+        "- Always include changed_files=[] and needs_user=false unless you truly need user input.\n"
+        "Template:\n"
+        "```text\n"
+        "status: success\n"
+        "partial: <true|false>\n"
+        f"profile: {profile}\n"
+        f"{body}"
+        "changed_files: []\n"
+        "needs_user: false\n"
+        "```\n"
+    )
 
 
 def _worker_profile_strategy(task: dict[str, Any]) -> str:

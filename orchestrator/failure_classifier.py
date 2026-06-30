@@ -50,6 +50,9 @@ def classify_worker_failure(
     if subtype == "error_max_turns" or "maximum number of turns" in text or "max_turns" in text:
         if changed_files:
             return FailureClassification("max_turns_with_diff", True, "verify_partial_patch", evidence)
+        if _stream_has_enough_data_marker(stream):
+            evidence.append("stream_marker=enough_data_without_final")
+            return FailureClassification("worker_ignored_early_output", True, "enforce_partial_result_template", evidence)
         return FailureClassification("max_turns_no_diff", True, "escalate_model_or_narrow_task", evidence)
     if "worker_no_diff" in text or (status == "failed" and not changed_files):
         return FailureClassification("worker_no_diff", True, "retry_with_stronger_route", evidence)
@@ -121,6 +124,45 @@ def _last_string(rows: list[dict[str, Any]], key: str) -> str | None:
         if isinstance(result, dict) and isinstance(result.get(key), str):
             return result[key]
     return None
+
+
+def _stream_has_enough_data_marker(rows: list[dict[str, Any]]) -> bool:
+    text = "\n".join(_stream_text_candidates(rows)).lower()
+    return _contains_any(
+        text,
+        [
+            "i have enough data",
+            "i have enough evidence",
+            "enough data to compile",
+            "enough evidence to compile",
+            "ready to compile",
+            "ready to draft",
+            "准备输出",
+            "足够数据",
+            "足够证据",
+        ],
+    )
+
+
+def _stream_text_candidates(rows: list[dict[str, Any]]) -> list[str]:
+    candidates: list[str] = []
+    for row in rows:
+        value = row.get("text")
+        if isinstance(value, str):
+            candidates.append(value)
+        message = row.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and isinstance(item.get("text"), str):
+                        candidates.append(item["text"])
+            elif isinstance(content, str):
+                candidates.append(content)
+        part = row.get("part")
+        if isinstance(part, dict) and isinstance(part.get("text"), str):
+            candidates.append(part["text"])
+    return candidates
 
 
 def _contains_any(text: str, needles: list[str]) -> bool:

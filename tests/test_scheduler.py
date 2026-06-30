@@ -342,6 +342,10 @@ def test_opencode_prompt_embeds_context_without_external_artifact_paths(tmp_path
     assert "Read budget profile: code_contract_audit" in prompt
     assert '"max_files": 5' in prompt
     assert "Read-only completion rule:" in prompt
+    assert "Required read-only output contract:" in prompt
+    assert "do not spend the final allowed turn on another Read/List/Search" in prompt
+    assert "status: success" in prompt
+    assert "changed_files: []" in prompt
     assert "## Project Memory" in prompt
     assert "README.md: app overview" in prompt
     assert "Task JSON:" not in prompt
@@ -410,8 +414,11 @@ def test_code_contract_profile_gets_early_output_strategy_not_next_task_seed(tmp
     assert "Next-task planning strategy:" not in prompt
     assert "Seed files World already selected" not in prompt
     assert "Code-contract audit early-output strategy:" in prompt
+    assert "Required read-only output contract:" in prompt
     assert "Read at most 3 files before drafting a contract hypothesis" in prompt
     assert "producer, consumer, mismatch risk" in prompt
+    assert "suspected_contract:" in prompt
+    assert "If you think 'I have enough data', immediately return the template" in prompt
 
 
 def test_quick_triage_and_docs_review_profiles_get_early_output_strategy(tmp_path):
@@ -437,9 +444,13 @@ def test_quick_triage_and_docs_review_profiles_get_early_output_strategy(tmp_pat
     )
 
     assert "Quick-triage early-output strategy:" in quick_prompt
+    assert "Required read-only output contract:" in quick_prompt
     assert "Read at most 2 files before drafting a provisional result" in quick_prompt
+    assert "conclusion:" in quick_prompt
     assert "Docs-review early-output strategy:" in docs_prompt
+    assert "Required read-only output contract:" in docs_prompt
     assert "Read at most 2 docs or config files before drafting a scorecard" in docs_prompt
+    assert "scorecard:" in docs_prompt
 
 
 def test_get_task_control_reads_control_files(tmp_path, monkeypatch):
