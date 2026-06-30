@@ -350,6 +350,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_terminal_handlers.py`.
    - Next: apply the same terminal-handler boundary to stale worker reaping if the reaper grows more artifact-writing behavior.
 
+4g. **Stale worker reaper**
+   - Implemented in `orchestrator/stale_worker_reaper.py`.
+   - Owns stale heartbeat detection, dead-process detection, recoverable read-only stream salvage, process control artifact updates, and stale terminal artifact writes.
+   - Patterns: Controller for recovery workflow, Facade over process/control artifact writes, Strategy injection for `pid_alive`, `now`, and `task_requires_diff`.
+   - Scheduler now delegates stale-worker decisions and only writes the returned status event.
+   - Tests: `tests/test_stale_worker_reaper.py` plus existing scheduler reaper integration test.
+   - Next: extract task artifact repair into a repair service if repair logic continues to grow.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.

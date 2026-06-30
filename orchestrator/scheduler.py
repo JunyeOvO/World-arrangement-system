@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -44,7 +42,6 @@ from .router import plan_route
 from .read_only_completion import (
     extract_worker_success_text as _extract_worker_success_text,
     read_only_result_can_finish as _read_only_result_can_finish,
-    read_only_review as _read_only_review,
     task_requires_diff as _task_requires_diff,
     task_requests_project_verification as _task_requests_project_verification,
 )
@@ -54,11 +51,12 @@ from .task_routing import (
     world_enabled as _world_enabled,
     world_write_policy as _world_write_policy,
 )
+from .stale_worker_reaper import StaleWorkerReaper
 from .task_result_document import build_final_markdown as _final_md
 from .task_review import TaskReviewRunner
 from .terminal_handlers import TerminalTaskHandler
 from .task_verification import TaskVerificationRunner
-from .verifier import verify, write_verify_result
+from .verifier import verify
 from .agents_md import inject_agents_md
 from .worktree import prepare_worktree
 from .approval_graph import ApprovalGraph, ApprovalMode, _classify_task_type
@@ -134,6 +132,11 @@ class OrchestratorService:
             metrics_recorder=self.attempt_metrics,
             dry_verify_func=_dry_verify,
             record_review_codex_usage=self._record_review_codex_usage,
+        )
+        self.stale_worker_reaper = StaleWorkerReaper(
+            artifacts=self.artifacts,
+            dry_verify_func=_dry_verify,
+            task_requires_diff=_task_requires_diff,
         )
         self.policy_learning = PolicyLearningRecorder(self.db)
 
@@ -1299,72 +1302,9 @@ class OrchestratorService:
         self.attempt_metrics.write_token_ledger(task_id)
 
     def _reap_stale_worker_task(self, task: dict[str, Any]) -> None:
-        status = str(task.get("status") or "")
-        if status not in {"EXECUTING", "RUNNING", "VERIFYING", "CODEX_REVIEWING", "REVIEWING"}:
-            return
-        run_dir = Path(str(task.get("run_dir") or ""))
-        control_dir = run_dir / "control"
-        process = _read_json_if_exists(control_dir / "process.json") or {}
-        heartbeat = _read_json_if_exists(control_dir / "heartbeat.json") or {}
-        if str(process.get("status") or "") != "running":
-            return
-        last_seen_ts = _parse_timestamp(heartbeat.get("last_seen") or heartbeat.get("ts"))
-        if last_seen_ts is None:
-            return
-        if time.time() - last_seen_ts < 120:
-            return
-        pid = process.get("pid")
-        if isinstance(pid, int) and _pid_is_alive(pid):
-            return
-
-        stdout_path = Path(str(process.get("stdout_path") or run_dir / "worker" / "worker.stream.jsonl"))
-        result_text = _extract_worker_success_text(stdout_path)
-        if result_text and not _task_requires_diff(task):
-            worker_payload = {
-                "status": "success",
-                "summary": result_text,
-                "changed_files": [],
-                "test_suggestions": task.get("test_commands", []),
-                "risks": ["reaped_from_stale_worker_stream"],
-                "needs_orchestrator_action": False,
-                "stdout_path": str(stdout_path),
-                "stderr_path": str(process.get("stderr_path") or ""),
-                "patch_file": None,
-                "tests_run": [],
-                "rollback_notes": "No diff to export",
-                "degraded": False,
-                "degradation_reason": None,
-                "mock_result": False,
-            }
-            verify_result = _dry_verify(task)
-            review = _read_only_review(task, reason="stale_worker_reaped")
-            self.artifacts.write_json(task["task_id"], "result.json", worker_payload)
-            write_verify_result(verify_result, run_dir / "verify" / "verify.json")
-            self.artifacts.write_json(task["task_id"], "verify/changed_files.json", [])
-            self.artifacts.write_json(task["task_id"], "review/review.json", review)
-            route = {
-                "selected_worker": task.get("route_worker") or "unknown",
-                "selected_model": task.get("route_model") or "unknown",
-            }
-            self.artifacts.write_text(task["task_id"], "final.md", _final_md(task, route, worker_payload, verify_result.to_dict(), review))
-            process.update({"status": "reaped", "finished_at": _now(), "reaped_reason": "stale_worker_success_stream"})
-            _write_json_file(control_dir / "process.json", process)
-            self._set_status(
-                task["task_id"],
-                "COMPLETED_WITH_ARTIFACTS",
-                "stale_worker_reaped",
-                {"reason": "stale worker had success result in stream", "stdout_path": str(stdout_path)},
-            )
-            return
-
-        process.update({"status": "failed", "finished_at": _now(), "reaped_reason": "stale_worker_no_live_pid"})
-        _write_json_file(control_dir / "process.json", process)
-        self._set_status(
-            task["task_id"],
-            "FAILED_FINAL",
-            "stale_worker_failed",
-            {"reason": "worker process is not alive and no recoverable success result was found"},
-        )
+        result = self.stale_worker_reaper.reap(task)
+        if result:
+            self._set_status(task["task_id"], result.status, result.event_type, result.payload)
 
 
 def _now() -> str:
@@ -1415,53 +1355,6 @@ def _read_json_if_exists(path: Path) -> dict[str, Any] | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {"unreadable": str(path)}
-
-
-def _write_json_file(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-    try:
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(path)
-    finally:
-        tmp.unlink(missing_ok=True)
-
-
-def _parse_timestamp(value: Any) -> float | None:
-    if not value:
-        return None
-    try:
-        if isinstance(value, (int, float)):
-            return float(value)
-        from datetime import datetime
-
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return None
-
-
-def _pid_is_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    if os.name == "nt":
-        try:
-            proc = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=5,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return False
-        return str(pid) in proc.stdout
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
 
 
 def _safe_parallelism_from_profile(profile: dict[str, Any]) -> int:
