@@ -57,6 +57,7 @@ from .task_routing import (
     world_enabled as _world_enabled,
     world_write_policy as _world_write_policy,
 )
+from .task_result_document import build_final_markdown as _final_md
 from .verifier import verify, write_verify_result
 from .agents_md import inject_agents_md
 from .worktree import prepare_worktree
@@ -1601,51 +1602,3 @@ def _dry_verify(task: dict[str, Any]):
         command_permissions_allowed=True,
         finished_at=_now(),
     )
-
-
-def _final_md(task: dict[str, Any], route: dict[str, Any], worker: dict[str, Any], verify_result: dict[str, Any], review: dict[str, Any]) -> str:
-    status_line = "degraded_mock_result" if worker.get("mock_result") or worker.get("degraded") else "completed"
-    review_verdict = "not approved for publish" if review.get("degraded") else ("approved" if review.get("approved") else "not approved")
-    degraded_note = ""
-    if review.get("degraded") or worker.get("degraded"):
-        degraded_note = f"""
-## Degraded Result
-
-This result is not a real worker audit or implementation.
-
-- Reason: {review.get('degradation_reason') or worker.get('degradation_reason')}
-- Review verdict: {review_verdict}
-- Publish allowed: false
-"""
-    return f"""# Task Result
-
-## Summary
-
-- Task: {task['user_goal']}
-- Project: {task['project_id']}
-- Worker: {route['selected_worker']}
-- Model: {route['selected_model']}
-- Status: {status_line}
-{degraded_note}
-
-## Worker
-
-{worker.get('summary', '')}
-
-## Verification
-
-- Tests passed: {verify_result.get('tests_passed')}
-- Build passed: {verify_result.get('build_passed')}
-
-## Review
-
-- Mode: {review.get('review_mode', 'unknown')}
-- Degraded: {review.get('degraded', False)}
-- Degradation reason: {review.get('degradation_reason')}
-- Verdict: {review_verdict}
-- Publish allowed: {bool(review.get('can_create_pr'))}
-
-## Safety
-
-V1 never auto-merges PRs.
-"""
