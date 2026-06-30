@@ -462,6 +462,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_project_command_service.py` plus existing project discovery, registry, CLI, and MCP-facing coverage.
    - Next: extract current-project task submission if `submit_current_project_task` and `submit_task` remain the largest non-execution responsibilities.
 
+4u. **Project lookup service**
+   - Implemented in `orchestrator/project_lookup_service.py`.
+   - Owns project list filtering, detect-project response shaping, and registered-project health diagnostics.
+   - Patterns: Information Expert for project lookup/health rules, Facade over registry detection.
+   - Scheduler delegates `list_projects(...)` and `detect_project(...)` while keeping CLI/MCP-compatible method names.
+   - Tests: `tests/test_project_lookup_service.py` plus existing project registry and CLI coverage.
+   - Next: extract task submission persistence so scheduler no longer creates task DB rows and dispatch usage events directly.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.

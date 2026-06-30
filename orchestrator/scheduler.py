@@ -12,6 +12,7 @@ from .db import TaskDB
 from .pr import create_pr_or_patch
 from .project_registry import detect_project, load_projects
 from .project_command_service import ProjectCommandService
+from .project_lookup_service import ProjectLookupService
 from .task_protocol import (
     apply_read_budget_to_route,
 )
@@ -63,6 +64,7 @@ class OrchestratorService:
         self.db = TaskDB(self.paths.state_db)
         self.db.init()
         self.artifacts = ArtifactStore(self.paths.runs)
+        self.project_lookup = ProjectLookupService()
         self.project_commands = ProjectCommandService()
         self.attempt_metrics = AttemptMetricsRecorder(self.db)
         self.permission_auditor = WorkerPermissionAuditor(self.db)
@@ -170,24 +172,10 @@ class OrchestratorService:
         )
 
     def list_projects(self, query: str | None = None) -> dict[str, Any]:
-        projects = load_projects()
-        rows = list(projects.values())
-        if query:
-            q = query.lower()
-            rows = [p for p in rows if q in p.get("project_id", "").lower() or q in p.get("name", "").lower()]
-        return {"projects": rows}
+        return self.project_lookup.list_projects(query)
 
     def detect_project(self, repo_path: str | None = None, git_remote_url: str | None = None, cwd: str | None = None) -> dict[str, Any]:
-        match = detect_project(repo_path=repo_path, git_remote_url=git_remote_url, cwd=cwd)
-        health = _project_registration_health(match.project, repo_path or cwd)
-        return {
-            "project_id": match.project_id,
-            "confidence": match.confidence,
-            "matched_by": match.matched_by,
-            "needs_user": match.needs_user,
-            "project": match.project,
-            "health": health,
-        }
+        return self.project_lookup.detect_project(repo_path=repo_path, git_remote_url=git_remote_url, cwd=cwd)
 
     # ── World vNext lightweight tools ──
 
@@ -581,39 +569,6 @@ class OrchestratorService:
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-def _project_registration_health(project: dict[str, Any] | None, requested_repo_path: str | None = None) -> dict[str, Any]:
-    if not project:
-        return {"status": "unknown", "issues": ["project is not registered"], "warnings": []}
-    issues: list[str] = []
-    warnings: list[str] = []
-    repo_raw = str(project.get("repo") or "")
-    repo_path = Path(repo_raw).expanduser() if repo_raw else None
-    if not repo_raw:
-        issues.append("registered project has no repo path")
-    elif not repo_path.exists():
-        issues.append(f"registered repo path does not exist: {repo_raw}")
-    requested = Path(requested_repo_path).expanduser().resolve() if requested_repo_path else None
-    if requested and repo_path and repo_path.exists():
-        try:
-            if repo_path.resolve() != requested:
-                issues.append(f"registered repo path differs from requested path: {repo_raw}")
-        except OSError:
-            issues.append(f"registered repo path cannot be resolved: {repo_raw}")
-    if project.get("allow_auto_pr") is True:
-        issues.append("allow_auto_pr is enabled; World deployment policy expects false unless explicitly approved")
-    for key in ("test_commands", "build_commands"):
-        value = project.get(key)
-        if value is not None and not isinstance(value, list):
-            issues.append(f"{key} must be a list")
-        elif value == []:
-            warnings.append(f"{key} is empty")
-    return {
-        "status": "needs_fix" if issues else "ok",
-        "issues": issues,
-        "warnings": warnings,
-    }
 
 
 def _worker_prompt(task: dict[str, Any], route: dict[str, Any]) -> str:
