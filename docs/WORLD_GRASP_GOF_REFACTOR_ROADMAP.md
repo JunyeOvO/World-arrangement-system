@@ -366,6 +366,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_task_artifact_repair.py` plus existing scheduler repair integration test.
    - Next: extract outcome recording if outcome derivation needs more artifact IO or quality-matrix policy.
 
+4i. **Task outcome recorder**
+   - Implemented in `orchestrator/task_outcome_recording.py`.
+   - Owns terminal artifact reads, quality outcome derivation, `task_outcomes` persistence, and `outcome.json` writes.
+   - Patterns: Information Expert for quality-matrix evidence gathering, Facade over DB/artifact persistence.
+   - Scheduler lifecycle now receives `TaskOutcomeRecorder.record_task_outcome` directly as the outcome callback.
+   - Tests: `tests/test_task_outcome_recording.py`.
+   - Next: review remaining scheduler responsibilities around Codex usage recording and world-plan creation.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.

@@ -16,7 +16,6 @@ from .failure_classifier import (
     FailureClassification,
 )
 from .multimodal import load_image_inputs
-from .outcomes import derive_task_outcome
 from .pr import create_pr_or_patch
 from .project_memory import ensure_project_memory
 from .project_registry import detect_project, load_projects
@@ -26,6 +25,7 @@ from .task_protocol import (
 )
 from .task_artifact_repair import TaskArtifactRepairService
 from .task_lifecycle import TaskLifecycleController
+from .task_outcome_recording import TaskOutcomeRecorder
 from .task_publish import TaskPublishRunner
 from .project_commands import (
     handle_confirm_project_profile,
@@ -101,11 +101,12 @@ class OrchestratorService:
             artifacts=self.artifacts,
             metrics_recorder=self.attempt_metrics,
         )
+        self.outcome_recorder = TaskOutcomeRecorder(db=self.db, artifacts=self.artifacts)
         self.lifecycle = TaskLifecycleController(
             self.db,
             now=_now,
             sync_task_artifact=self.artifact_repair.sync_task_artifact_from_db,
-            record_task_outcome=self._record_task_outcome,
+            record_task_outcome=self.outcome_recorder.record_task_outcome,
         )
         self.attempt_executor = WorkerAttemptExecutor(
             artifacts=self.artifacts,
@@ -1167,27 +1168,6 @@ class OrchestratorService:
 
     def _set_status(self, task_id: str, status: str, event_type: str, payload: dict[str, Any]) -> None:
         self.lifecycle.set_status(task_id, status, event_type, payload)
-
-    def _record_task_outcome(self, task_id: str, metadata: dict[str, Any] | None = None) -> None:
-        task = self.db.get_task(task_id)
-        if not task:
-            return
-        run_dir = Path(str(task.get("run_dir") or ""))
-        task_artifact = _read_json_if_exists(run_dir / "task.json") or {}
-        verify = _read_json_if_exists(run_dir / "verify" / "verify.json") or {}
-        review = _read_json_if_exists(run_dir / "review" / "review.json") or {}
-        result = _read_json_if_exists(run_dir / "result.json") or {}
-        outcome = derive_task_outcome(
-            task,
-            metrics=self.db.list_task_metrics(task_id),
-            task_artifact=task_artifact if isinstance(task_artifact, dict) else {},
-            verify=verify if isinstance(verify, dict) else {},
-            review=review if isinstance(review, dict) else {},
-            result=result if isinstance(result, dict) else {},
-            metadata=metadata,
-        )
-        self.db.upsert_task_outcome(outcome)
-        self.artifacts.write_json(task_id, "outcome.json", outcome)
 
     def _check_worker_declared_permissions(self, task_id: str, worker_name: str, task: dict[str, Any]) -> dict[str, Any]:
         return self.permission_auditor.check_declared_permissions(task_id, worker_name, task)
