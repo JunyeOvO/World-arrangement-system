@@ -82,6 +82,24 @@ from .worker_attempts import build_retry_chain as _build_retry_chain
 Remaining work in this slice: move worker-result normalization and attempt lifecycle hooks out of
 `_execute` after this smaller boundary is stable.
 
+## Slice 3 Implemented: Read-Only Completion Policy
+
+Moved read-only completion rules out of `orchestrator/scheduler.py` into
+`orchestrator/read_only_completion.py`.
+
+New ownership:
+
+- `scheduler.py`: asks whether a read-only task can finish, whether verification can be skipped, and which review payload to write.
+- `read_only_completion.py`: diff requirement detection, project-verification intent detection, partial-result salvage, worker stream text extraction, read-only review payload.
+
+Pattern mapping:
+
+- `task_requires_diff(...)`: Policy/Strategy boundary for execution mode.
+- `read_only_failure_summary(...)`: Chain of Responsibility-style salvage from success text, stream deltas, then meaningful raw summary.
+- `read_only_review(...)`: Factory-style construction of the terminal review payload.
+
+This isolates the logic that determines when a read-only worker result is a valid artifact instead of a failed patch attempt.
+
 ## Verification
 
 Targeted tests:
@@ -99,8 +117,8 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Patterns: Strategy for retry attempts, Adapter for worker result normalization.
 
 2. **Read-only completion policy**
-   - Move `_read_only_failure_summary`, partial salvage, and read-only completion decisions into a policy module.
-   - Candidate module: `orchestrator/read_only_completion.py`.
+   - Implemented in `orchestrator/read_only_completion.py`.
+   - Next: split policy tests into a dedicated test module when the scheduler compatibility layer is removed.
    - Patterns: Chain of Responsibility for salvage sources.
 
 3. **Task lifecycle state controller**
