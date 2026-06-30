@@ -438,6 +438,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_task_completion_pipeline.py` plus existing scheduler, terminal handler, verification, review, and publish coverage.
    - Next: extract worktree and multimodal setup into a preparation service, then review whether remaining scheduler wrappers are thin enough to keep.
 
+4r. **Task preparation service**
+   - Implemented in `orchestrator/task_preparation.py`.
+   - Owns worktree creation, `worktree.json` persistence, worktree-ready status, optional MiMo vision observation injection, `task.json` refresh for vision context, and primary OpenCode AGENTS.md preparation.
+   - Patterns: Facade over worktree / multimodal / AGENTS setup, Controller for pre-attempt preparation, Strategy injection for worktree and vision adapters.
+   - Scheduler now delegates preparation and `_execute` reads as gate -> route -> preparation -> attempts -> completion pipeline.
+   - Tests: `tests/test_task_preparation.py` plus existing scheduler, MiMo vision, and AGENTS.md coverage.
+   - Next: perform a scheduler ownership audit and decide whether remaining public wrappers should stay as API facade methods or move behind smaller services.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.

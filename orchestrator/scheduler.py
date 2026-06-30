@@ -11,7 +11,6 @@ from .baselines import build_manual_baseline, build_replay_baseline
 from .codex_usage_recording import CodexUsageRecorder
 from .config import ensure_runtime_dirs
 from .db import TaskDB
-from .multimodal import load_image_inputs
 from .pr import create_pr_or_patch
 from .project_registry import detect_project, load_projects
 from .task_protocol import (
@@ -41,13 +40,12 @@ from .stale_worker_reaper import StaleWorkerReaper
 from .task_completion_pipeline import TaskCompletionPipeline
 from .task_execution_gate import TaskExecutionGate
 from .task_attempt_runner import TaskAttemptRunner
+from .task_preparation import TaskPreparationService
 from .task_review import TaskReviewRunner
 from .task_submission import TaskSubmissionBuilder
 from .terminal_handlers import TerminalTaskHandler
 from .task_verification import TaskVerificationRunner
 from .verifier import verify
-from .agents_md import inject_agents_md
-from .worktree import prepare_worktree
 from .approval_policy_service import ApprovalPolicyService
 from .attempt_recording import AttemptMetricsRecorder
 from .policy_learning import PolicyLearningRecorder
@@ -57,7 +55,6 @@ from .worker_attempt_executor import WorkerAttemptExecutor
 from .worker_prompt import build_worker_prompt
 from .world_runtime_service import WorldRuntimeService
 from .workers.claude_code_worker import ClaudeCodeWorker
-from .workers.mimo_vision_adapter import MimoVisionAdapter
 from .workers.opencode_worker import OpenCodeWorker
 
 
@@ -101,6 +98,10 @@ class OrchestratorService:
             artifacts=self.artifacts,
             model_metrics_summary=self.db.model_metrics_summary,
             world_plan_factory=self.world_create_plan,
+        )
+        self.preparation = TaskPreparationService(
+            artifacts=self.artifacts,
+            set_status=self._set_status,
         )
         self.lifecycle = TaskLifecycleController(
             self.db,
@@ -564,31 +565,14 @@ class OrchestratorService:
         )
         self._set_status(task_id, "ROUTED", "routed", route)
 
-        wt = prepare_worktree(
-            project["repo"], project.get("default_branch", "main"),
-            task_id, Path(task["run_dir"]), dry_run=dry_run,
+        preparation = self.preparation.prepare(
+            task_id=task_id,
+            task=task,
+            project=project,
+            route=route,
+            dry_run=dry_run,
         )
-        self.artifacts.write_json(task_id, "worktree.json", wt.__dict__)
-        task["worktree_path"] = wt.path
-        self._set_status(task_id, "WORKTREE_READY", "worktree_ready", wt.__dict__)
-
-        if task.get("image_paths") or task.get("image_base64"):
-            observation = self._run_mimo_vision(task, dry_run=dry_run)
-            task["vision_observation"] = observation
-            task["vision_observation_path"] = str(Path(task["run_dir"]) / "multimodal" / "vision_observation.json")
-            self.artifacts.write_json(task_id, "task.json", task)
-            self._set_status(task_id, "WORKTREE_READY", "vision_observation_ready", {
-                "path": task["vision_observation_path"],
-                "degraded": observation.get("degraded", False),
-                "confidence": observation.get("confidence"),
-            })
-
-        # ── Inject AGENTS.md for OpenCodeWorker (skip if user file exists) ──
-        if route.get("selected_worker") == "opencode":
-            agents_inject = inject_agents_md(Path(wt.path))
-            self.artifacts.write_json(task_id, "agents_md.json", agents_inject.__dict__)
-            if not agents_inject.injected:
-                self._set_status(task_id, "WORKTREE_READY", "agents_md_skipped", agents_inject.__dict__)
+        wt = preparation.worktree
 
         # ── Retry chain with escalation ──
         attempt_run = self.attempt_runner.run(
@@ -627,19 +611,6 @@ class OrchestratorService:
             branch=wt.branch,
             dry_run=dry_run,
         )
-
-    def _run_mimo_vision(self, task: dict[str, Any], dry_run: bool = False) -> dict[str, Any]:
-        images = load_image_inputs(task.get("image_paths"), task.get("image_base64"))
-        adapter = MimoVisionAdapter()
-        observation = adapter.analyze(
-            task_id=task["task_id"],
-            prompt=task["user_goal"],
-            images=images,
-            output_path=Path(task["run_dir"]) / "multimodal" / "vision_observation.json",
-            model_key="mimo_v25",
-            dry_run=dry_run,
-        )
-        return observation.to_dict()
 
     def _record_policy_learning(
         self, task: dict[str, Any], project: dict[str, Any], success: bool,
