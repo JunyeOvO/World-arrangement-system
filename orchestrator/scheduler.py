@@ -44,8 +44,6 @@ from .project_commands import (
 from .reviewer import run_codex_review
 from .risk_policy import check_changed_files, evaluate_task
 from .router import plan_route
-from .agent_llm import agent_llm_name
-from .llm_capability import capability_profile, normalize_capability_tier
 from .read_only_completion import (
     extract_worker_success_text as _extract_worker_success_text,
     read_only_failure_summary as _read_only_failure_summary,
@@ -56,6 +54,11 @@ from .read_only_completion import (
     task_requests_project_verification as _task_requests_project_verification,
 )
 from .runtime_store import RuntimeStore
+from .task_routing import (
+    apply_route_override as _apply_route_override,
+    world_enabled as _world_enabled,
+    world_write_policy as _world_write_policy,
+)
 from .verifier import verify, write_verify_result
 from .agents_md import inject_agents_md
 from .worktree import prepare_worktree
@@ -1662,64 +1665,6 @@ def _safe_parallelism_from_profile(profile: dict[str, Any]) -> int:
     if any(x in detected for x in ["node", "react", "vite", "python"]):
         return 2
     return 1
-
-
-def _world_enabled(project: dict[str, Any]) -> bool:
-    world = project.get("world")
-    if isinstance(world, dict) and world.get("enabled") is True:
-        return True
-    return project.get("world_enabled") is True
-
-
-def _world_write_policy(project: dict[str, Any]) -> str:
-    world = project.get("world")
-    if isinstance(world, dict) and world.get("write_policy"):
-        return str(world["write_policy"])
-    return str(project.get("world_write_policy") or "zero_write")
-
-
-def _apply_route_override(route: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]:
-    override = task.get("route_override")
-    if not isinstance(override, dict):
-        return route
-
-    worker = override.get("worker") or route.get("selected_worker")
-    model = override.get("model") or route.get("selected_model")
-    variant = override.get("variant") if override.get("variant") is not None else route.get("variant")
-    tier = normalize_capability_tier(variant, route.get("intensity"))
-    profile = capability_profile(model, tier, route.get("intensity"))
-    if worker == "opencode" and variant in {"high", "max"}:
-        profile = capability_profile(model, variant, variant)
-
-    route.update(
-        {
-            "selected_worker": worker,
-            "selected_agent": worker,
-            "selected_model": model,
-            "selected_llm": model,
-            "agent_llm": agent_llm_name(worker, model),
-            "variant": variant,
-            "capability_tier": profile.get("tier", tier),
-            "capability_profile": profile,
-            "reason": f"route override: worker={worker}, model={model}, variant={variant}",
-            "fallback_models": [],
-            "max_retries": 0,
-            "escalation_policy": "none",
-            "blocked": False,
-            "retry_chain": [
-                {
-                    "worker": worker,
-                    "model": model,
-                    "variant": variant,
-                    "intensity": profile.get("effort") or route.get("intensity"),
-                    "capability_tier": profile.get("tier", tier),
-                    "capability_profile": profile,
-                    "reason": "route override primary attempt",
-                }
-            ],
-        }
-    )
-    return route
 
 
 def _worker_prompt(task: dict[str, Any], route: dict[str, Any]) -> str:

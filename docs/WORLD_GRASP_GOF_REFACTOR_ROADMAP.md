@@ -150,6 +150,22 @@ Pattern mapping:
 
 This centralizes state-transition side effects while leaving existing outcome derivation untouched.
 
+## Slice 7 Implemented: Task Routing Policy
+
+Moved route override and World-enabled project policy helpers into `orchestrator/task_routing.py`.
+
+New ownership:
+
+- `scheduler.py`: asks for a route and applies the returned policy.
+- `task_routing.py`: determines World-enabled project flags, write policy, and forced route override normalization.
+
+Pattern mapping:
+
+- `apply_route_override(...)`: Strategy normalization for forced worker/model/variant execution.
+- `world_enabled(...)` and `world_write_policy(...)`: Information Expert for project routing metadata.
+
+This removes capability-profile construction and agent display-name derivation from scheduler.
+
 ## Verification
 
 Targeted tests:
@@ -165,6 +181,10 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Retry-chain planning extracted to `orchestrator/worker_attempts.py`.
    - Next: extract worker-result normalization and attempt lifecycle hooks from `scheduler.py`.
    - Patterns: Strategy for retry attempts, Adapter for worker result normalization.
+
+1a. **Task routing policy**
+   - Implemented in `orchestrator/task_routing.py`.
+   - Next: split full route planning facade from `_route_for_task`.
 
 2. **Read-only completion policy**
    - Implemented in `orchestrator/read_only_completion.py`.

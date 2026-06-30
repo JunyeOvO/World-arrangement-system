@@ -5,7 +5,6 @@ from pathlib import Path
 
 from orchestrator.scheduler import (
     OrchestratorService,
-    _apply_route_override,
     _worker_prompt,
 )
 from orchestrator.failure_classifier import FailureClassification
@@ -14,6 +13,11 @@ from orchestrator.read_only_completion import (
     skip_project_verification_for_read_only_task as _skip_project_verification_for_read_only_task,
     task_requires_diff as _task_requires_diff,
     task_requests_project_verification as _task_requests_project_verification,
+)
+from orchestrator.task_routing import (
+    apply_route_override as _apply_route_override,
+    world_enabled,
+    world_write_policy,
 )
 from orchestrator.worker_attempts import (
     build_retry_chain as _build_retry_chain,
@@ -113,6 +117,15 @@ def test_route_override_forces_single_opencode_attempt():
     assert len(chain) == 1
     assert chain[0]["worker"] == "opencode"
     assert chain[0]["variant"] == "high"
+
+
+def test_world_route_policy_supports_new_and_legacy_project_flags():
+    assert world_enabled({"world": {"enabled": True}})
+    assert world_enabled({"world_enabled": True})
+    assert not world_enabled({})
+    assert world_write_policy({"world": {"write_policy": "zero_write"}}) == "zero_write"
+    assert world_write_policy({"world_write_policy": "sandbox_only"}) == "sandbox_only"
+    assert world_write_policy({}) == "zero_write"
 
 
 def test_claude_failure_escalates_to_opencode_glm52():
