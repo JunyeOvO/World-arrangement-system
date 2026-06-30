@@ -486,6 +486,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_current_project_task_service.py` plus existing MCP/scheduler submission coverage.
    - Next: reduce remaining scheduler helper wrappers or assess whether `_execute` is now the only substantial orchestration logic left.
 
+4x. **Task execution service**
+   - Implemented in `orchestrator/task_execution_service.py`.
+   - Owns the post-submission execution pipeline: execution gate application, route artifact and DB route fields, preparation, attempt runner results, terminal attempt policy signals, and completion pipeline handoff.
+   - Patterns: Pipeline / Controller for execution orchestration, Facade over gate / route / preparation / attempts / completion collaborators.
+   - Scheduler keeps `_execute(...)` as an internal compatibility facade and delegates the real behavior to `TaskExecutionService`.
+   - Tests: `tests/test_task_execution_service.py` plus existing scheduler, gate, route, attempt, preparation, and completion tests.
+   - Next: scheduler is now mostly API facade plus composition root; review remaining helper wrappers for whether they are stable callback adapters or should move into a composition module.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.

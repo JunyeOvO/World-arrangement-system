@@ -13,10 +13,8 @@ from .pr import create_pr_or_patch
 from .current_project_task_service import CurrentProjectTaskService
 from .project_command_service import ProjectCommandService
 from .project_lookup_service import ProjectLookupService
-from .task_protocol import (
-    apply_read_budget_to_route,
-)
 from .task_artifact_repair import TaskArtifactRepairService
+from .task_execution_service import TaskExecutionService
 from .task_lifecycle import TaskLifecycleController
 from .task_outcome_recording import TaskOutcomeRecorder
 from .task_publish import TaskPublishRunner
@@ -161,6 +159,18 @@ class OrchestratorService:
         self.execution_gate = TaskExecutionGate(
             artifacts=self.artifacts,
             approval_policy=self.approval_policy,
+        )
+        self.task_execution = TaskExecutionService(
+            db=self.db,
+            artifacts=self.artifacts,
+            execution_gate=self.execution_gate,
+            route_planner=self.route_planner,
+            preparation=self.preparation,
+            attempt_runner=self.attempt_runner,
+            completion_pipeline=self.completion_pipeline,
+            set_status=self._set_status,
+            record_policy_learning=self._record_policy_learning,
+            now=_now,
         )
         self.task_submission = TaskSubmissionService(
             db=self.db,
@@ -408,70 +418,7 @@ class OrchestratorService:
         return self.project_commands.ignore_project(repo_path, reason)
 
     def _execute(self, task: dict[str, Any], project: dict[str, Any], dry_run: bool = False) -> None:
-        task_id = task["task_id"]
-        gate = self.execution_gate.run(task, project)
-        for transition in gate.transitions:
-            self._set_status(task_id, transition.status, transition.event_type, transition.payload)
-        if not gate.continue_execution:
-            if gate.policy_incident:
-                self._record_policy_learning(task, project, success=False, incident=True)
-            return
-
-        route = self.route_planner.route_for_task(task, project)
-        route = apply_read_budget_to_route(route, task)
-        self.artifacts.write_json(task_id, "route.json", route)
-        self.db.update_task(
-            task_id, route_worker=route["selected_worker"],
-            route_model=route["selected_model"], route_variant=route.get("variant") or "", updated_at=_now(),
-        )
-        self._set_status(task_id, "ROUTED", "routed", route)
-
-        preparation = self.preparation.prepare(
-            task_id=task_id,
-            task=task,
-            project=project,
-            route=route,
-            dry_run=dry_run,
-        )
-        wt = preparation.worktree
-
-        # ── Retry chain with escalation ──
-        attempt_run = self.attempt_runner.run(
-            task_id=task_id,
-            task=task,
-            route=route,
-            worktree_path=Path(wt.path),
-            dry_run=dry_run,
-        )
-        if attempt_run.terminal_status:
-            self._set_status(task_id, attempt_run.terminal_status, attempt_run.terminal_event or "", attempt_run.terminal_payload)
-        if not attempt_run.completed:
-            if attempt_run.policy_signal:
-                signal = attempt_run.policy_signal
-                self._record_policy_learning(
-                    task,
-                    project,
-                    success=signal.success,
-                    worker=signal.worker,
-                    model=signal.model,
-                    rollback=signal.rollback,
-                    incident=signal.incident,
-                )
-            return
-        final_result = attempt_run.final_result
-        last_attempt = attempt_run.last_attempt
-
-        self.completion_pipeline.run(
-            task_id=task_id,
-            task=task,
-            project=project,
-            route=route,
-            worker_result=final_result,
-            last_attempt=last_attempt,
-            worktree_path=Path(wt.path),
-            branch=wt.branch,
-            dry_run=dry_run,
-        )
+        self.task_execution.execute(task, project, dry_run=dry_run)
 
     def _record_policy_learning(
         self, task: dict[str, Any], project: dict[str, Any], success: bool,
