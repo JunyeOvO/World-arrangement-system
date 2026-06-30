@@ -9,13 +9,33 @@ from orchestrator.failure_classifier import (
 
 def test_classifies_max_turns_without_diff(tmp_path):
     stream = tmp_path / "worker.stream.jsonl"
-    stream.write_text(json.dumps({"type": "result", "subtype": "error_max_turns"}) + "\n", encoding="utf-8")
+    stream.write_text(
+        "\n".join([
+            json.dumps({
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "I will inspect the repository first."}]},
+            }),
+            json.dumps({"type": "result", "subtype": "error_max_turns"}),
+        ]) + "\n",
+        encoding="utf-8",
+    )
 
     result = classify_worker_failure(status="failed", stdout_path=str(stream), changed_files=[])
 
     assert result.failure_reason == "max_turns_no_diff"
     assert result.retryable is True
     assert result.recommended_action == "escalate_model_or_narrow_task"
+
+
+def test_classifies_silent_max_turns_without_output(tmp_path):
+    stream = tmp_path / "worker.stream.jsonl"
+    stream.write_text(json.dumps({"type": "result", "subtype": "error_max_turns"}) + "\n", encoding="utf-8")
+
+    result = classify_worker_failure(status="failed", stdout_path=str(stream), changed_files=[])
+
+    assert result.failure_reason == "silent_max_turns_no_output"
+    assert result.recommended_action == "seed_evidence_or_reduce_tool_budget"
+    assert "stream_text=[]" in result.evidence
 
 
 def test_classifies_max_turns_with_diff(tmp_path):

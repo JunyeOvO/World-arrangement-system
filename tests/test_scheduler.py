@@ -396,10 +396,19 @@ def test_next_task_planning_prompt_limits_search_and_requires_early_draft(tmp_pa
 
 
 def test_code_contract_profile_gets_early_output_strategy_not_next_task_seed(tmp_path):
+    worktree = tmp_path / "worktree"
+    (worktree / "js").mkdir(parents=True)
+    (worktree / "tests").mkdir()
+    (worktree / "js" / "three-work-area.js").write_text(
+        "export function resolveAnchored3DWorkArea(workArea) { return workArea?.bounds; }\n",
+        encoding="utf-8",
+    )
+    (worktree / "js" / "state.js").write_text("export const selectedWorkArea = null;\n", encoding="utf-8")
+    (worktree / "tests" / "work-area.test.js").write_text("test('work area', () => {})\n", encoding="utf-8")
     task = {
         "user_goal": "只读调查 3D workArea 数据契约风险",
         "run_dir": str(tmp_path / "run"),
-        "worktree_path": str(tmp_path / "worktree"),
+        "worktree_path": str(worktree),
         "risk_level": "low",
         "forbidden_paths": [".env"],
         "task_mode": "read_only",
@@ -412,7 +421,10 @@ def test_code_contract_profile_gets_early_output_strategy_not_next_task_seed(tmp
     prompt = _worker_prompt(task, {"selected_worker": "claude_code", "selected_model": "deepseek_flash"})
 
     assert "Next-task planning strategy:" not in prompt
-    assert "Seed files World already selected" not in prompt
+    assert "Seed files World selected for code_contract_audit" in prompt
+    assert "Seed evidence excerpts" in prompt
+    assert "- js/three-work-area.js" in prompt
+    assert "resolveAnchored3DWorkArea" in prompt
     assert "Code-contract audit early-output strategy:" in prompt
     assert "Required read-only output contract:" in prompt
     assert "Read at most 3 files before drafting a contract hypothesis" in prompt
@@ -422,10 +434,15 @@ def test_code_contract_profile_gets_early_output_strategy_not_next_task_seed(tmp
 
 
 def test_quick_triage_and_docs_review_profiles_get_early_output_strategy(tmp_path):
+    worktree = tmp_path / "worktree"
+    (worktree / "js").mkdir(parents=True)
+    (worktree / "README.md").write_text("# Travel With Me\n", encoding="utf-8")
+    (worktree / "package.json").write_text('{"scripts":{"test":"vitest"}}\n', encoding="utf-8")
+    (worktree / "js" / "main.js").write_text("export function boot() {}\n", encoding="utf-8")
     base_task = {
         "user_goal": "只读调查项目状态，不修改文件。",
         "run_dir": str(tmp_path / "run"),
-        "worktree_path": str(tmp_path / "worktree"),
+        "worktree_path": str(worktree),
         "risk_level": "low",
         "forbidden_paths": [".env"],
         "task_mode": "read_only",
@@ -444,6 +461,10 @@ def test_quick_triage_and_docs_review_profiles_get_early_output_strategy(tmp_pat
     )
 
     assert "Quick-triage early-output strategy:" in quick_prompt
+    assert "Seed files World selected for quick_triage" in quick_prompt
+    assert "- README.md" in quick_prompt
+    assert "- package.json" in quick_prompt
+    assert "Travel With Me" in quick_prompt
     assert "Required read-only output contract:" in quick_prompt
     assert "Read at most 2 files before drafting a provisional result" in quick_prompt
     assert "conclusion:" in quick_prompt

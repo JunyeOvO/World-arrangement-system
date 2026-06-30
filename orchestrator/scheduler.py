@@ -2353,22 +2353,28 @@ def _read_only_required_output_contract(task: dict[str, Any]) -> str:
 def _worker_profile_strategy(task: dict[str, Any]) -> str:
     profile = str(task.get("read_budget_profile") or "").strip().lower()
     if profile == "quick_triage":
+        seed_context = _read_only_seed_context(task, profile)
         return (
             "Quick-triage early-output strategy:\n"
             "- Do not use Agent/subagent tools for this profile; keep the task bounded in the current worker.\n"
+            "- Use the seeded files and evidence below before listing or searching the repo.\n"
             "- Read at most 2 files before drafting a provisional result.\n"
             "- After 2 file reads or one clear signal, stop broad exploration and write the best current conclusion.\n"
             "- The result must include: conclusion, evidence files, key risks, next step, and changed_files=[].\n"
             "- If evidence is incomplete, explicitly label the answer partial and return it instead of reading more files.\n"
+            f"{seed_context}"
         )
     if profile == "code_contract_audit":
+        seed_context = _read_only_seed_context(task, profile)
         return (
             "Code-contract audit early-output strategy:\n"
             "- Do not use Agent/subagent tools for this profile; inspect only the contract path needed for this task.\n"
+            "- Use the seeded files and evidence below before listing or searching the repo.\n"
             "- Read at most 3 files before drafting a contract hypothesis.\n"
             "- The first draft must include: suspected contract, producer, consumer, mismatch risk, evidence files, next file if needed, and changed_files=[].\n"
             "- After the draft exists, read at most 2 additional files only to confirm or reject that hypothesis.\n"
             "- If the budget is nearly exhausted, return the current hypothesis as a partial result with risks; do not continue searching.\n"
+            f"{seed_context}"
         )
     if profile == "docs_review":
         return (
@@ -2393,6 +2399,127 @@ def _worker_profile_strategy(task: dict[str, Any]) -> str:
         "- If evidence is incomplete, mark the candidate as partial and return status=partial or success with risks; do not continue searching.\n"
         f"{seed_context}"
     )
+
+
+def _read_only_seed_context(task: dict[str, Any], profile: str) -> str:
+    worktree_raw = task.get("worktree_path") or task.get("repo_path")
+    if not worktree_raw:
+        return ""
+    worktree = Path(str(worktree_raw))
+    if not worktree.exists():
+        return ""
+    files = _read_only_seed_files(worktree, task, profile)
+    if not files:
+        return ""
+    if profile == "code_contract_audit":
+        files = files[:16]
+        evidence_limit = 8000
+        evidence_files = files[:8]
+    else:
+        files = files[:10]
+        evidence_limit = 5000
+        evidence_files = files[:5]
+    lines = [f"\nSeed files World selected for {profile}; prefer these paths before listing/searching:"]
+    for path in files:
+        try:
+            lines.append(f"- {path.relative_to(worktree).as_posix()}")
+        except ValueError:
+            continue
+    evidence = _seed_evidence(worktree, evidence_files, total_limit=evidence_limit)
+    if evidence:
+        lines.extend(["", "Seed evidence excerpts; use this before calling Read:", evidence.rstrip()])
+    return "\n".join(lines) + "\n"
+
+
+def _read_only_seed_files(worktree: Path, task: dict[str, Any], profile: str) -> list[Path]:
+    roots = _seed_roots_for_profile(profile)
+    candidates: list[Path] = []
+    explicit_targets = task.get("target_paths")
+    if isinstance(explicit_targets, list):
+        for target in explicit_targets:
+            path = worktree / str(target)
+            if path.is_file() and _is_seed_file(path) and _is_seed_file_size_allowed(path):
+                candidates.append(path)
+    for root in roots:
+        path = worktree / root
+        if path.is_file() and _is_seed_file(path) and _is_seed_file_size_allowed(path):
+            candidates.append(path)
+        elif path.is_dir():
+            for child in path.rglob("*"):
+                if child.is_file() and _is_seed_file(child) and _is_seed_file_size_allowed(child):
+                    candidates.append(child)
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for path in candidates:
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique.append(path)
+    return sorted(unique, key=lambda path: _profile_seed_rank(path, str(task.get("user_goal") or ""), profile))
+
+
+def _seed_roots_for_profile(profile: str) -> list[str]:
+    if profile == "code_contract_audit":
+        return ["README.md", "package.json", "js", "server", "tests", "docs"]
+    return ["README.md", "package.json", "ARCHITECTURE.md", "js", "server", "docs"]
+
+
+def _profile_seed_rank(path: Path, goal: str, profile: str) -> tuple[int, int, str]:
+    relative = path.as_posix().lower()
+    lowered_goal = goal.lower()
+    priority = 80
+    markers: tuple[str, ...]
+    if profile == "code_contract_audit":
+        markers = (
+            "work-area",
+            "workarea",
+            "three-work",
+            "map-3d",
+            "3d",
+            "state",
+            "route",
+            "planner",
+            "config",
+            "test",
+            "spec",
+            "readme.md",
+            "package.json",
+        )
+    else:
+        markers = (
+            "readme.md",
+            "package.json",
+            "architecture",
+            "main",
+            "state",
+            "map",
+            "3d",
+            "route",
+            "config",
+            "test",
+        )
+    for index, marker in enumerate(markers):
+        if marker in relative:
+            priority = index
+            break
+    goal_bonus = 0
+    for token in re.findall(r"[A-Za-z0-9_]{3,}", lowered_goal):
+        if token in relative:
+            goal_bonus -= 2
+    if any(marker in lowered_goal for marker in ("workarea", "work area", "选区")) and any(
+        marker in relative for marker in ("work-area", "workarea", "three-work", "state")
+    ):
+        goal_bonus -= 8
+    if any(marker in lowered_goal for marker in ("测试", "test", "package")) and any(
+        marker in relative for marker in ("package.json", "test", "vitest", "playwright")
+    ):
+        goal_bonus -= 8
+    if any(marker in lowered_goal for marker in ("配置", "config", "projects.yaml")) and any(
+        marker in relative for marker in ("package.json", "readme", "config", "architecture")
+    ):
+        goal_bonus -= 5
+    return priority, goal_bonus, relative
 
 
 def _next_task_planning_seed_context(task: dict[str, Any]) -> str:
@@ -2422,7 +2549,7 @@ def _next_task_planning_seed_context(task: dict[str, Any]) -> str:
         except ValueError:
             continue
         lines.append(f"- {relative}")
-    evidence = _next_task_planning_seed_evidence(worktree, files[:8])
+    evidence = _seed_evidence(worktree, files[:8], total_limit=7000)
     if evidence:
         lines.extend(
             [
@@ -2434,7 +2561,7 @@ def _next_task_planning_seed_context(task: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _next_task_planning_seed_evidence(worktree: Path, files: list[Path]) -> str:
+def _seed_evidence(worktree: Path, files: list[Path], *, total_limit: int) -> str:
     blocks: list[str] = []
     total_chars = 0
     for path in files:
@@ -2455,7 +2582,7 @@ def _next_task_planning_seed_evidence(worktree: Path, files: list[Path]) -> str:
         if not snippet:
             continue
         block = f"### {relative}\n```text\n{snippet}\n```\n"
-        if total_chars + len(block) > 7000:
+        if total_chars + len(block) > total_limit:
             break
         blocks.append(block)
         total_chars += len(block)

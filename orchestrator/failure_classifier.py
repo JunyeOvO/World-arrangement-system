@@ -50,6 +50,9 @@ def classify_worker_failure(
     if subtype == "error_max_turns" or "maximum number of turns" in text or "max_turns" in text:
         if changed_files:
             return FailureClassification("max_turns_with_diff", True, "verify_partial_patch", evidence)
+        if not _stream_text_candidates(stream):
+            evidence.append("stream_text=[]")
+            return FailureClassification("silent_max_turns_no_output", True, "seed_evidence_or_reduce_tool_budget", evidence)
         if _stream_has_enough_data_marker(stream):
             evidence.append("stream_marker=enough_data_without_final")
             return FailureClassification("worker_ignored_early_output", True, "enforce_partial_result_template", evidence)
