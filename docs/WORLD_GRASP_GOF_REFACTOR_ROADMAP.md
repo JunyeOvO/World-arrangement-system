@@ -100,6 +100,56 @@ Pattern mapping:
 
 This isolates the logic that determines when a read-only worker result is a valid artifact instead of a failed patch attempt.
 
+## Slice 4 Implemented: Attempt Metrics Recording
+
+Moved regular attempt metrics and token-ledger refresh out of `orchestrator/scheduler.py` into
+`orchestrator/attempt_recording.py`.
+
+New ownership:
+
+- `scheduler.py`: signals that an attempt result should be recorded.
+- `attempt_recording.py`: collects worker stream metrics, reads memory stats from `task.json`, writes attempt/root metrics artifacts, updates DB metrics, refreshes `token_ledger.json`.
+
+Pattern mapping:
+
+- `AttemptMetricsRecorder`: Facade over metrics collection, DB upsert, and token ledger refresh.
+- `memory_metric_kwargs(...)`: Information Expert for extracting memory hit/miss counts from task artifacts.
+
+This removes another persistence concern from the scheduler and gives metrics recording a direct unit-test boundary.
+
+## Slice 5 Implemented: Worker Permission Audit
+
+Moved worker permission preflight and changed-file permission audit into
+`orchestrator/worker_permission_audit.py`.
+
+New ownership:
+
+- `scheduler.py`: asks whether a worker may proceed.
+- `worker_permission_audit.py`: derives declared write paths, checks worker write policy, records permission audit events.
+
+Pattern mapping:
+
+- `WorkerPermissionAuditor`: Facade over permission policy and audit event persistence.
+- `declared_write_paths(...)`: Information Expert for consolidating owned, target, and planned write paths.
+
+This keeps permission event payload construction out of scheduler and gives worker permission auditing a direct test boundary.
+
+## Slice 6 Implemented: Task Lifecycle Controller
+
+Moved the status-transition write flow into `orchestrator/task_lifecycle.py`.
+
+New ownership:
+
+- `scheduler.py`: requests a status transition.
+- `task_lifecycle.py`: updates task status, syncs task artifacts, appends lifecycle events, triggers terminal outcome hooks.
+
+Pattern mapping:
+
+- `TaskLifecycleController`: Facade around DB status updates, event persistence, artifact sync, and outcome hooks.
+- terminal outcome hook: Template Method-style extension point supplied by the scheduler.
+
+This centralizes state-transition side effects while leaving existing outcome derivation untouched.
+
 ## Verification
 
 Targeted tests:
@@ -122,12 +172,17 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Patterns: Chain of Responsibility for salvage sources.
 
 3. **Task lifecycle state controller**
-   - Isolate status transitions and event payload construction from direct scheduler calls.
-   - Candidate module: `orchestrator/task_lifecycle.py`.
+   - Status transition side effects implemented in `orchestrator/task_lifecycle.py`.
+   - Next: move richer event payload construction out of the long `_execute` flow.
    - Patterns: State + Facade.
 
+3a. **Worker permission audit**
+   - Implemented in `orchestrator/worker_permission_audit.py`.
+   - Next: move non-permission status transition payloads into a lifecycle controller.
+
 4. **Baseline/outcome recording service**
-   - Move token ledger, baseline replay, and outcome write sequencing behind a recording service.
+   - Attempt metrics and token-ledger refresh now live in `orchestrator/attempt_recording.py`.
+   - Next: move baseline replay and outcome write sequencing behind recording services.
    - Candidate module: `orchestrator/task_recording.py`.
    - Patterns: Facade.
 

@@ -1,6 +1,7 @@
 import json
 
 from orchestrator.db import TaskDB
+from orchestrator.attempt_recording import AttemptMetricsRecorder
 from orchestrator.metrics import collect_task_metrics, parse_worker_stream, write_metrics
 
 
@@ -100,3 +101,71 @@ def test_metrics_write_and_db_summary(tmp_path):
     assert db.list_task_metrics("t1")[0]["memory_hit_count"] == 3
     assert db.list_task_metrics("t1")[0]["memory_miss_count"] == 1
     assert db.model_metrics_summary()[0]["model"] == "deepseek_pro"
+
+
+def test_attempt_metrics_recorder_writes_metrics_and_token_ledger(tmp_path):
+    run_dir = tmp_path / "run"
+    worker_dir = run_dir / "worker"
+    worker_dir.mkdir(parents=True)
+    stream = worker_dir / "worker.stream.jsonl"
+    stream.write_text(
+        json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "total_cost_usd": 0.25,
+                "usage": {"input_tokens": 1000, "output_tokens": 200, "cache_read_input_tokens": 50},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (run_dir / "task.json").write_text(
+        json.dumps(
+            {
+                "project_memory": {
+                    "memory": {"stats": {"hit_count": 4, "miss_count": 2}},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    db = TaskDB(tmp_path / "state.sqlite")
+    db.create_task(
+        {
+            "task_id": "t_recorder",
+            "project_id": "p1",
+            "repo_path": str(tmp_path),
+            "user_goal": "inspect project",
+            "status": "EXECUTING",
+            "created_at": "2026-06-30T01:00:00Z",
+            "updated_at": "2026-06-30T01:00:01Z",
+            "run_dir": str(run_dir),
+        }
+    )
+
+    class Result:
+        status = "success"
+        stdout_path = str(stream)
+        changed_files = ["app.py"]
+
+    recorder = AttemptMetricsRecorder(db)
+    recorder.write_attempt_metrics(
+        "t_recorder",
+        1,
+        {"worker": "claude_code", "model": "deepseek_pro"},
+        Result(),
+        None,
+        build_passed=True,
+        review_approved=True,
+    )
+
+    attempt_metrics = json.loads((run_dir / "attempts" / "01" / "metrics.json").read_text(encoding="utf-8"))
+    ledger = json.loads((run_dir / "token_ledger.json").read_text(encoding="utf-8"))
+    row = db.list_task_metrics("t_recorder")[0]
+
+    assert attempt_metrics["memory_hit_count"] == 4
+    assert attempt_metrics["memory_miss_count"] == 2
+    assert attempt_metrics["changed_files_count"] == 1
+    assert row["total_cost_usd"] == 0.25
+    assert ledger["worker"]["total_tokens"] == 1250

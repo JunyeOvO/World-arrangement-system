@@ -1,10 +1,12 @@
 import pytest
 
+from orchestrator.db import TaskDB
 from orchestrator.state_machine import (
     InvalidTransitionError, TaskState,
     apply_event, can_transition, resolve_state, resolve_state_old,
     STATE_ALIASES,
 )
+from orchestrator.task_lifecycle import TaskLifecycleController
 
 
 def test_valid_transition():
@@ -84,3 +86,39 @@ def test_retry_flow():
     assert can_transition("FAILED", "RETRYING")
     assert can_transition("RETRYING", "EXECUTING")
     assert can_transition("FAILED", "ESCALATED")
+
+
+def test_task_lifecycle_controller_updates_status_event_and_terminal_hook(tmp_path):
+    db = TaskDB(tmp_path / "state.sqlite")
+    db.create_task(
+        {
+            "task_id": "t_lifecycle",
+            "project_id": "p1",
+            "repo_path": str(tmp_path),
+            "user_goal": "inspect project",
+            "status": "EXECUTING",
+            "created_at": "2026-06-30T01:00:00Z",
+            "updated_at": "2026-06-30T01:00:01Z",
+            "run_dir": str(tmp_path / "run"),
+        }
+    )
+    synced: list[str] = []
+    outcomes: list[tuple[str, dict]] = []
+    lifecycle = TaskLifecycleController(
+        db,
+        now=lambda: "2026-06-30T01:00:02Z",
+        sync_task_artifact=synced.append,
+        record_task_outcome=lambda task_id, metadata: outcomes.append((task_id, metadata)),
+    )
+
+    lifecycle.set_status("t_lifecycle", "COMPLETED_NO_CHANGES", "done", {"ok": True})
+
+    task = db.get_task("t_lifecycle")
+    events = db.list_events("t_lifecycle")
+    assert task["status"] == "COMPLETED_NO_CHANGES"
+    assert task["updated_at"] == "2026-06-30T01:00:02Z"
+    assert synced == ["t_lifecycle"]
+    assert events[-1]["event_type"] == "done"
+    assert events[-1]["from_state"] == "EXECUTING"
+    assert events[-1]["to_state"] == "COMPLETED_NO_CHANGES"
+    assert outcomes == [("t_lifecycle", {"event_type": "done"})]

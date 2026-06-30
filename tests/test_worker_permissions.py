@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 from jsonschema import Draft202012Validator
 
+from orchestrator.db import TaskDB
 from orchestrator.permissions import (
     load_permissions,
     check_write_path,
@@ -14,6 +15,7 @@ from orchestrator.permissions import (
     check_provider,
     WorkerPermissions,
 )
+from orchestrator.worker_permission_audit import WorkerPermissionAuditor, declared_write_paths
 
 
 # ── Load profiles ──
@@ -208,6 +210,44 @@ def test_bulk_write_review_reports_denied_and_ask():
     assert review.requires_ask is True
     assert any(check.target == ".env" and not check.allowed for check in review.checks)
     assert any(check.target == "infra/prod/main.tf" and check.requires_ask for check in review.checks)
+
+
+def test_worker_permission_auditor_records_preflight_and_diff_events(tmp_path):
+    db = TaskDB(tmp_path / "state.sqlite")
+    db.create_task(
+        {
+            "task_id": "t_perm",
+            "project_id": "p1",
+            "repo_path": str(tmp_path),
+            "user_goal": "edit infra",
+            "status": "EXECUTING",
+            "created_at": "2026-06-30T01:00:00Z",
+            "updated_at": "2026-06-30T01:00:01Z",
+            "run_dir": str(tmp_path / "run"),
+        }
+    )
+    auditor = WorkerPermissionAuditor(db)
+
+    preflight = auditor.check_declared_permissions(
+        "t_perm",
+        "claude_code",
+        {
+            "owned_paths": ["src/app.py", "src/app.py"],
+            "target_paths": ["infra/prod/main.tf"],
+            "planned_files": [".env"],
+        },
+    )
+    diff = auditor.check_diff_permissions("t_perm", "claude_code", ["src/app.py"])
+    events = db.list_events("t_perm")
+
+    assert declared_write_paths(
+        {"owned_paths": ["a"], "target_paths": ["a", "b"], "planned_files": ["c"]}
+    ) == ["a", "b", "c"]
+    assert not preflight["allowed"]
+    assert preflight["requires_ask"]
+    assert diff["allowed"]
+    assert events[-2]["event_type"] == "permission_preflight"
+    assert events[-1]["event_type"] == "permission_diff_checked"
 
 
 def test_worker_launch_command_checks_deny_list_only():

@@ -20,10 +20,8 @@ from .failure_classifier import (
     classify_verify_failure,
     classify_worker_failure,
 )
-from .metrics import collect_task_metrics, write_metrics
 from .multimodal import load_image_inputs
-from .outcomes import derive_task_outcome, should_record_outcome
-from .permissions import check_write_paths
+from .outcomes import derive_task_outcome
 from .pr import create_pr_or_patch
 from .project_memory import ensure_project_memory
 from .project_registry import detect_project, load_projects
@@ -32,7 +30,7 @@ from .task_protocol import (
     normalize_task_protocol,
     verification_commands_for_policy,
 )
-from .token_ledger import write_task_token_ledger
+from .task_lifecycle import TaskLifecycleController
 from .project_commands import (
     handle_confirm_project_profile,
     handle_discover_projects,
@@ -64,8 +62,10 @@ from .worktree import prepare_worktree
 from .approval_graph import ApprovalGraph, ApprovalMode, _classify_task_type
 from .approval_memory import ApprovalMemory
 from .approval_explainer import explain_decision
+from .attempt_recording import AttemptMetricsRecorder
 from .policy_update_engine import PolicyUpdateEngine
 from .process_control import request_cancel
+from .worker_permission_audit import WorkerPermissionAuditor
 from .worker_attempts import (
     build_retry_chain as _build_retry_chain,
     is_retryable_failure as _is_retryable_failure,
@@ -93,6 +93,14 @@ class OrchestratorService:
         self.db = TaskDB(self.paths.state_db)
         self.db.init()
         self.artifacts = ArtifactStore(self.paths.runs)
+        self.attempt_metrics = AttemptMetricsRecorder(self.db)
+        self.permission_auditor = WorkerPermissionAuditor(self.db)
+        self.lifecycle = TaskLifecycleController(
+            self.db,
+            now=_now,
+            sync_task_artifact=self._sync_task_artifact_from_db,
+            record_task_outcome=self._record_task_outcome,
+        )
 
     def list_projects(self, query: str | None = None) -> dict[str, Any]:
         projects = load_projects()
@@ -1336,13 +1344,7 @@ class OrchestratorService:
         )
 
     def _set_status(self, task_id: str, status: str, event_type: str, payload: dict[str, Any]) -> None:
-        old = self.db.get_task(task_id)
-        old_status = old["status"] if old else None
-        self.db.update_task(task_id, status=status, updated_at=_now())
-        self._sync_task_artifact_from_db(task_id)
-        self.db.append_event(task_id, event_type, old_status, status, payload)
-        if should_record_outcome(status):
-            self._record_task_outcome(task_id, {"event_type": event_type})
+        self.lifecycle.set_status(task_id, status, event_type, payload)
 
     def _record_task_outcome(self, task_id: str, metadata: dict[str, Any] | None = None) -> None:
         task = self.db.get_task(task_id)
@@ -1422,48 +1424,14 @@ class OrchestratorService:
         verify = _read_json_if_exists(run_dir / "verify" / "verify.json") or {}
         review = _read_json_if_exists(run_dir / "review" / "review.json") or {}
         self.artifacts.write_text(task["task_id"], "final.md", _final_md(task, route, result, verify, review))
-        metrics = collect_task_metrics(
-            task_id=task["task_id"],
-            attempt_no=1,
-            worker=str(task.get("route_worker") or "opencode"),
-            model=str(task.get("route_model") or "opencode_go_glm52"),
-            status=str(result.get("status") or ""),
-            stream_path=str(stdout_path),
-            changed_files_count=len(result.get("changed_files") or []),
-            build_passed=verify.get("build_passed"),
-            review_approved=review.get("approved"),
-            **_memory_metric_kwargs(task),
-        )
-        write_metrics(metrics, run_dir / "attempts" / "01" / "metrics.json")
-        write_metrics(metrics, run_dir / "metrics.json")
-        self.db.upsert_task_metrics(metrics.to_dict())
-        self._write_token_ledger(task["task_id"])
+        self.attempt_metrics.write_repaired_result_metrics(task, result, stdout_path, verify, review)
         return True
 
     def _check_worker_declared_permissions(self, task_id: str, worker_name: str, task: dict[str, Any]) -> dict[str, Any]:
-        paths = _declared_write_paths(task)
-        review = check_write_paths(worker_name, paths).to_dict()
-        self.db.append_event(
-            task_id,
-            "permission_preflight",
-            self.db.get_task(task_id)["status"],
-            self.db.get_task(task_id)["status"],
-            {"worker": worker_name, "paths": paths, "permission": review},
-        )
-        return review
+        return self.permission_auditor.check_declared_permissions(task_id, worker_name, task)
 
     def _check_worker_diff_permissions(self, task_id: str, worker_name: str, changed_files: list[str]) -> dict[str, Any]:
-        review = check_write_paths(worker_name, changed_files or []).to_dict()
-        event_type = "permission_denied" if not review["allowed"] else "permission_diff_checked"
-        task = self.db.get_task(task_id)
-        self.db.append_event(
-            task_id,
-            event_type,
-            task["status"] if task else None,
-            task["status"] if task else None,
-            {"worker": worker_name, "changed_files": changed_files or [], "permission": review},
-        )
-        return review
+        return self.permission_auditor.check_diff_permissions(task_id, worker_name, changed_files)
 
     def _write_attempt_metrics(
         self,
@@ -1475,30 +1443,18 @@ class OrchestratorService:
         build_passed: bool | None = None,
         review_approved: bool | None = None,
     ) -> None:
-        metrics = collect_task_metrics(
-            task_id=task_id,
-            attempt_no=attempt_no,
-            worker=str(attempt.get("worker", "")),
-            model=str(attempt.get("model", "")),
-            status=str(getattr(worker_result, "status", "")),
-            stream_path=getattr(worker_result, "stdout_path", None),
-            changed_files_count=len(getattr(worker_result, "changed_files", []) or []),
-            failure_reason=failure.failure_reason if failure else None,
+        self.attempt_metrics.write_attempt_metrics(
+            task_id,
+            attempt_no,
+            attempt,
+            worker_result,
+            failure,
             build_passed=build_passed,
             review_approved=review_approved,
-            **_memory_metric_kwargs(_read_task_artifact(task_id, self.db)),
         )
-        metrics_path = Path(self.db.get_task(task_id)["run_dir"]) / "attempts" / f"{attempt_no:02d}" / "metrics.json"
-        write_metrics(metrics, metrics_path)
-        write_metrics(metrics, Path(self.db.get_task(task_id)["run_dir"]) / "metrics.json")
-        self.db.upsert_task_metrics(metrics.to_dict())
-        self._write_token_ledger(task_id)
 
     def _write_token_ledger(self, task_id: str) -> None:
-        task = self.db.get_task(task_id)
-        if not task or not task.get("run_dir"):
-            return
-        write_task_token_ledger(self.db, task_id, Path(str(task["run_dir"])) / "token_ledger.json")
+        self.attempt_metrics.write_token_ledger(task_id)
 
     def _reap_stale_worker_task(self, task: dict[str, Any]) -> None:
         status = str(task.get("status") or "")
@@ -1573,15 +1529,6 @@ def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def _declared_write_paths(task: dict[str, Any]) -> list[str]:
-    paths: list[str] = []
-    for key in ("owned_paths", "target_paths", "planned_files"):
-        value = task.get(key)
-        if isinstance(value, list):
-            paths.extend(str(item) for item in value if item)
-    return list(dict.fromkeys(paths))
-
-
 def _review_degraded_blocks_publish(task: dict[str, Any], review: dict[str, Any]) -> bool:
     if not review.get("degraded"):
         return False
@@ -1649,37 +1596,6 @@ def _read_json_if_exists(path: Path) -> dict[str, Any] | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {"unreadable": str(path)}
-
-
-def _read_task_artifact(task_id: str, db: TaskDB) -> dict[str, Any]:
-    task = db.get_task(task_id)
-    if not task:
-        return {}
-    path = Path(str(task.get("run_dir") or "")) / "task.json"
-    return _read_json_if_exists(path) or {}
-
-
-def _memory_metric_kwargs(task: dict[str, Any]) -> dict[str, int | None]:
-    payload = task.get("project_memory")
-    if not isinstance(payload, dict):
-        return {"memory_hit_count": None, "memory_miss_count": None}
-    memory = payload.get("memory")
-    if not isinstance(memory, dict):
-        return {"memory_hit_count": None, "memory_miss_count": None}
-    stats = memory.get("stats")
-    if not isinstance(stats, dict):
-        return {"memory_hit_count": None, "memory_miss_count": None}
-    return {
-        "memory_hit_count": _int_or_none(stats.get("hit_count")),
-        "memory_miss_count": _int_or_none(stats.get("miss_count")),
-    }
-
-
-def _int_or_none(value: Any) -> int | None:
-    try:
-        return None if value is None else int(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _write_json_file(path: Path, payload: dict[str, Any]) -> None:
