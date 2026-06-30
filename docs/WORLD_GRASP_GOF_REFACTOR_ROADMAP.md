@@ -550,6 +550,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_router_route_policy.py` plus existing router v3/router integration behavior tests.
    - Next: extract router reason/explanation formatting so `router_v3.py` can become a very small facade over classifier, history, route policy, and explanation collaborators.
 
+4af. **Router explanation formatter**
+   - Implemented in `orchestrator/router_explanation.py`.
+   - Owns blocked-route reason text and normal route explanation formatting, including history summaries, budget cap reporting, history decision details, open-bug-hunt rationale, and fallback model text.
+   - `router_v3.py` is now a thin facade over classifier, history/cost strategy, route policy, route explanation, and final route assembly.
+   - Patterns: Information Expert for route explanation shape, Builder-style string assembly for operator-facing route reasons, Facade-preserving router entrypoint.
+   - Tests: `tests/test_router_explanation.py` plus existing router v3/router integration behavior tests.
+   - Next: move to Console query view models or another remaining large policy module; router v3 no longer owns substantial policy internals.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.

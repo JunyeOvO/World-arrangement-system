@@ -4,6 +4,7 @@ from typing import Any
 
 from .agent_llm import agent_llm_name
 from .llm_capability import capability_profile, normalize_capability_tier
+from .router_explanation import blocked_route_reason, route_reason
 from .router_history import (
     estimate_route_cost,
     float_or_none,
@@ -36,7 +37,7 @@ def apply_router_v3(
         route["task_labels"] = task_labels
         route["retry_chain"] = []
         route["fallback_models"] = []
-        route["reason"] = f"{route.get('reason', 'BLOCKED')}; task_shape={task_shape}; budget_estimate_usd=0.00"
+        route["reason"] = blocked_route_reason(route, task_shape)
         return route
 
     selected = select_for_shape(task_shape, route, task, project, history_basis, budget_cap)
@@ -54,7 +55,7 @@ def apply_router_v3(
     route["budget_estimate_usd"] = estimate
     route["budget_cap_usd"] = budget_cap
     route["history_basis"] = history_basis
-    route["reason"] = _reason(route, task_shape, history_basis, budget_cap, estimate)
+    route["reason"] = route_reason(route, task_shape, history_basis, budget_cap, estimate)
     route["agent_llm"] = agent_llm_name(str(route.get("selected_worker", "")), str(route.get("selected_model", "")))
     task_labels = dict(route.get("task_labels") or {})
     task_labels["task_shape"] = task_shape
@@ -66,36 +67,3 @@ def apply_router_v3(
         route.get("intensity"),
     )
     return route
-
-
-def _reason(route: dict[str, Any], task_shape: str, history: dict[str, Any], budget_cap: float | None, estimate: float) -> str:
-    selected_model = str(route.get("selected_model", ""))
-    parts = [
-        f"task_shape={task_shape}",
-        f"selected={route.get('selected_worker')}/{selected_model}",
-        f"budget_estimate_usd={estimate:.2f}",
-    ]
-    if budget_cap is not None:
-        parts.append(f"budget_cap_usd={budget_cap:.2f}")
-    if selected_model in history:
-        item = history[selected_model]
-        parts.append(
-            f"history[{selected_model}].success_rate={item.get('success_rate')}; avg_cost={item.get('avg_cost')}"
-        )
-    elif history:
-        parts.append("history=no_selected_model_record")
-    else:
-        parts.append("history=no_prior_metrics")
-    decision = history.get("_decision") if isinstance(history.get("_decision"), dict) else None
-    if decision:
-        parts.append(
-            "history_decision="
-            f"{decision.get('selected')}; "
-            f"scores={decision.get('scores')}"
-        )
-    if task_shape == "open_bug_hunt" and selected_model == "deepseek_pro":
-        parts.append("open bug hunt avoids flash as primary")
-    fallback = [s["model"] for s in route.get("retry_chain", [])[1:]]
-    if fallback:
-        parts.append(f"fallback={fallback}")
-    return "; ".join(parts)
