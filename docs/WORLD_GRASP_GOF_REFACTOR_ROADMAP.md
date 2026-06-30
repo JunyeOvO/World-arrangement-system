@@ -478,6 +478,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_task_submission_service.py` plus existing task submission, scheduler, CLI, and World coverage.
    - Next: extract current-project submission detection or reduce `_execute` further if scheduler remains above target size.
 
+4w. **Current project task service**
+   - Implemented in `orchestrator/current_project_task_service.py`.
+   - Owns current-repository project detection, NEEDS_USER response shaping when detection fails, and delegation into the normal submit-task path.
+   - Patterns: Controller for current-project task submission, Facade over project detection and task submission.
+   - Scheduler delegates `submit_current_project_task(...)` while keeping MCP-compatible public parameters.
+   - Tests: `tests/test_current_project_task_service.py` plus existing MCP/scheduler submission coverage.
+   - Next: reduce remaining scheduler helper wrappers or assess whether `_execute` is now the only substantial orchestration logic left.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.

@@ -10,7 +10,7 @@ from .codex_usage_recording import CodexUsageRecorder
 from .config import ensure_runtime_dirs
 from .db import TaskDB
 from .pr import create_pr_or_patch
-from .project_registry import detect_project
+from .current_project_task_service import CurrentProjectTaskService
 from .project_command_service import ProjectCommandService
 from .project_lookup_service import ProjectLookupService
 from .task_protocol import (
@@ -172,6 +172,9 @@ class OrchestratorService:
             execute_task=self._execute,
             get_task_status=self.get_task_status,
         )
+        self.current_project_tasks = CurrentProjectTaskService(
+            submit_task=self.submit_task,
+        )
         self.task_operations = TaskOperationsService(
             db=self.db,
             artifacts=self.artifacts,
@@ -230,16 +233,13 @@ class OrchestratorService:
         read_budget_profile: str | None = None,
         read_budget: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        match = detect_project(repo_path=repo_path or ".")
-        if match.needs_user or not match.project_id:
-            return {"status": "NEEDS_USER", "message": "project could not be detected", "match": match.__dict__}
-        return self.submit_task(
-            match.project_id,
+        return self.current_project_tasks.submit_current_project_task(
             user_goal,
-            risk_level,
-            auto_execute,
-            auto_pr,
-            dry_run,
+            repo_path=repo_path,
+            risk_level=risk_level,
+            auto_execute=auto_execute,
+            auto_pr=auto_pr,
+            dry_run=dry_run,
             image_paths=image_paths,
             image_base64=image_base64,
             task_mode=task_mode,
