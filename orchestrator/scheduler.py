@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import json
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
 from .artifacts import ArtifactStore
-from .baselines import build_manual_baseline, build_replay_baseline
 from .codex_usage_recording import CodexUsageRecorder
 from .config import ensure_runtime_dirs
 from .db import TaskDB
@@ -43,13 +41,13 @@ from .task_attempt_runner import TaskAttemptRunner
 from .task_preparation import TaskPreparationService
 from .task_review import TaskReviewRunner
 from .task_submission import TaskSubmissionBuilder
+from .task_operations import TaskOperationsService
 from .terminal_handlers import TerminalTaskHandler
 from .task_verification import TaskVerificationRunner
 from .verifier import verify
 from .approval_policy_service import ApprovalPolicyService
 from .attempt_recording import AttemptMetricsRecorder
 from .policy_learning import PolicyLearningRecorder
-from .process_control import request_cancel
 from .worker_permission_audit import WorkerPermissionAuditor
 from .worker_attempt_executor import WorkerAttemptExecutor
 from .worker_prompt import build_worker_prompt
@@ -168,6 +166,15 @@ class OrchestratorService:
         self.execution_gate = TaskExecutionGate(
             artifacts=self.artifacts,
             approval_policy=self.approval_policy,
+        )
+        self.task_operations = TaskOperationsService(
+            db=self.db,
+            artifacts=self.artifacts,
+            artifact_repair=self.artifact_repair,
+            reap_stale_worker_task=self._reap_stale_worker_task,
+            record_policy_learning=self._record_policy_learning,
+            write_token_ledger=self.attempt_metrics.write_token_ledger,
+            now=_now,
         )
 
     def list_projects(self, query: str | None = None) -> dict[str, Any]:
@@ -335,28 +342,10 @@ class OrchestratorService:
         return {"task_id": task_id, "status": self.get_task_status(task_id)["status"], "run_dir": str(run_dir)}
 
     def get_task_status(self, task_id: str) -> dict[str, Any]:
-        task = self.db.get_task(task_id)
-        if not task:
-            return {"status": "NOT_FOUND", "task_id": task_id}
-        self._reap_stale_worker_task(task)
-        task = self.db.get_task(task_id) or task
-        events = self.db.list_events(task_id)
-        return {**task, "events": events[-10:]}
+        return self.task_operations.get_task_status(task_id)
 
     def read_task_result(self, task_id: str, sections: list[str] | None = None) -> dict[str, Any]:
-        task = self.db.get_task(task_id)
-        if not task:
-            return {"status": "NOT_FOUND", "task_id": task_id}
-        self._reap_stale_worker_task(task)
-        task = self.db.get_task(task_id) or task
-        index = self.artifacts.index(task_id)
-        result: dict[str, Any] = {"task": task, "artifacts": index}
-        for key in ["final.md", "review/review.json", "verify/verify.json", "verify/diff.patch", "metrics.json", "token_ledger.json", "multimodal/vision_observation.json", "result.json"]:
-            path = index.get(key)
-            if path:
-                text = Path(path).read_text(encoding="utf-8", errors="replace")
-                result[key] = text[:20000]
-        return result
+        return self.task_operations.read_task_result(task_id, sections)
 
     def record_task_baseline(
         self,
@@ -366,102 +355,28 @@ class OrchestratorService:
         actual: bool = False,
         baseline_kind: str | None = None,
     ) -> dict[str, Any]:
-        task = self.db.get_task(task_id)
-        if not task:
-            return {"status": "NOT_FOUND", "task_id": task_id}
-        if input_tokens is not None or output_tokens is not None:
-            if input_tokens is None or output_tokens is None:
-                return {"status": "INVALID_REQUEST", "error": "input_tokens and output_tokens must be provided together"}
-            baseline = build_manual_baseline(
-                task_id=task_id,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                baseline_kind=baseline_kind or ("codex_only_actual" if actual else "codex_only_manual_estimate"),
-                actual_codex_used=actual,
-                metadata={"source": "cli_record_task_baseline"},
-            )
-        else:
-            baseline = build_replay_baseline(
-                task=task,
-                artifact_index=self.artifacts.index(task_id),
-                baseline_kind=baseline_kind or "codex_only_replay",
-            )
-        self.db.record_task_baseline(baseline)
-        self.artifacts.append_jsonl(task_id, "baselines/task_baselines.jsonl", baseline)
-        self.db.append_event(
+        return self.task_operations.record_task_baseline(
             task_id,
-            "task_baseline_recorded",
-            None,
-            None,
-            {
-                "baseline_kind": baseline.get("baseline_kind"),
-                "source": baseline.get("source"),
-                "total_tokens": baseline.get("total_tokens"),
-                "actual_codex_used": bool(baseline.get("actual_codex_used")),
-            },
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            actual=actual,
+            baseline_kind=baseline_kind,
         )
-        self._write_token_ledger(task_id)
-        return {
-            "status": "BASELINE_RECORDED",
-            "task_id": task_id,
-            "baseline": baseline,
-            "token_ledger_path": str(Path(str(task["run_dir"])) / "token_ledger.json") if task.get("run_dir") else None,
-        }
 
     def repair_task_artifacts(self, task_id: str | None = None, limit: int = 200) -> dict[str, Any]:
-        return self.artifact_repair.repair_task_artifacts(task_id, limit)
+        return self.task_operations.repair_task_artifacts(task_id, limit)
 
     def open_task_artifacts(self, task_id: str) -> dict[str, Any]:
-        task = self.db.get_task(task_id)
-        if not task:
-            return {"status": "NOT_FOUND", "task_id": task_id}
-        return {"task_id": task_id, "run_dir": task["run_dir"], "files": self.artifacts.index(task_id)}
+        return self.task_operations.open_task_artifacts(task_id)
 
     def get_task_control(self, task_id: str) -> dict[str, Any]:
-        task = self.db.get_task(task_id)
-        if not task:
-            return {"status": "NOT_FOUND", "task_id": task_id}
-        self._reap_stale_worker_task(task)
-        task = self.db.get_task(task_id) or task
-        control_dir = Path(task["run_dir"]) / "control"
-        return {
-            "task_id": task_id,
-            "task_status": task["status"],
-            "run_dir": task["run_dir"],
-            "control_dir": str(control_dir),
-            "process": _read_json_if_exists(control_dir / "process.json"),
-            "heartbeat": _read_json_if_exists(control_dir / "heartbeat.json"),
-            "cancel_requested": _read_json_if_exists(control_dir / "cancel.requested"),
-        }
+        return self.task_operations.get_task_control(task_id)
 
     def cancel_task(self, task_id: str, reason: str = "") -> dict[str, Any]:
-        task = self.db.get_task(task_id)
-        if not task:
-            return {"status": "NOT_FOUND", "task_id": task_id}
-        control = request_cancel(Path(task["run_dir"]), reason)
-        self.db.update_task(task_id, status="CANCELLED", updated_at=_now())
-        self.db.append_event(
-            task_id,
-            "cancelled",
-            task["status"],
-            "CANCELLED",
-            {"reason": reason, "control": control},
-        )
-        return self.get_task_status(task_id)
+        return self.task_operations.cancel_task(task_id, reason)
 
     def rollback_task(self, task_id: str, cleanup_worktree: bool = True) -> dict[str, Any]:
-        task = self.db.get_task(task_id)
-        if not task:
-            return {"status": "NOT_FOUND", "task_id": task_id}
-        self.db.update_task(task_id, status="ROLLED_BACK", updated_at=_now())
-        self.db.append_event(task_id, "rolled_back", task["status"], "ROLLED_BACK", {"cleanup_worktree": cleanup_worktree})
-        # Record rollback for policy learning (demotes trust)
-        self._record_policy_learning(
-            task, {}, success=False,
-            worker=task.get("route_worker", ""), model=task.get("route_model", ""),
-            rollback=True,
-        )
-        return self.get_task_status(task_id)
+        return self.task_operations.rollback_task(task_id, cleanup_worktree)
 
     # ── Dynamic Approval Graph methods ──
 
@@ -707,15 +622,6 @@ def _project_registration_health(project: dict[str, Any] | None, requested_repo_
         "issues": issues,
         "warnings": warnings,
     }
-
-
-def _read_json_if_exists(path: Path) -> dict[str, Any] | None:
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {"unreadable": str(path)}
 
 
 def _worker_prompt(task: dict[str, Any], route: dict[str, Any]) -> str:

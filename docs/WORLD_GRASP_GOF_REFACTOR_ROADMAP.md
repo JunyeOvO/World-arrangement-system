@@ -446,6 +446,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_task_preparation.py` plus existing scheduler, MiMo vision, and AGENTS.md coverage.
    - Next: perform a scheduler ownership audit and decide whether remaining public wrappers should stay as API facade methods or move behind smaller services.
 
+4s. **Task operations service**
+   - Implemented in `orchestrator/task_operations.py`.
+   - Owns task status/result reads, baseline recording, artifact opening/repair delegation, process control reads, cancellation, and rollback.
+   - Patterns: Facade for task operation API, Information Expert for task artifact/result shape, Controller for user-triggered cancel/rollback commands.
+   - Scheduler keeps the public CLI/MCP-compatible methods but delegates the operation behavior to `TaskOperationsService`.
+   - Tests: `tests/test_task_operations.py` plus existing baseline, scheduler, CLI, and Console coverage.
+   - Next: move current-project submission/project-command wrappers behind narrower facades if scheduler remains above the target size after the execution pipeline cleanup.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.
