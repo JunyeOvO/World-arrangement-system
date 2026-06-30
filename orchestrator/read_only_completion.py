@@ -1,152 +1,31 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
+from .read_only_salvage import (
+    ReadOnlySalvagePolicy,
+    extract_worker_partial_text as _extract_worker_partial_text,
+    extract_worker_success_text as _extract_worker_success_text,
+    looks_like_meaningful_read_only_output as _looks_like_meaningful_read_only_output,
+    worker_text_candidates as _worker_text_candidates,
+)
+
 
 def extract_worker_success_text(path: Path) -> str | None:
-    if not path.exists():
-        return None
-    result_text: str | None = None
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return None
-    for line in lines:
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(event, dict):
-            continue
-        if event.get("type") == "result" and event.get("subtype") == "success":
-            raw = event.get("result")
-            if isinstance(raw, str) and raw.strip():
-                result_text = raw.strip()
-        message = event.get("message")
-        if isinstance(message, dict):
-            content = message.get("content")
-            if isinstance(content, list):
-                text = "\n".join(
-                    item.get("text", "")
-                    for item in content
-                    if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str)
-                ).strip()
-                if text:
-                    result_text = text
-        part = event.get("part")
-        if event.get("type") == "text" and isinstance(part, dict):
-            raw_text = part.get("text")
-            if isinstance(raw_text, str) and raw_text.strip():
-                result_text = raw_text.strip()
-    return result_text
+    return _extract_worker_success_text(path)
 
 
 def extract_worker_partial_text(path: Path) -> str | None:
-    text = extract_worker_success_text(path)
-    if text and looks_like_meaningful_read_only_output(text):
-        return text
-    chunks: list[str] = []
-    candidates: list[str] = []
-    if not path.exists():
-        return None
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return None
-    for line in lines:
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(event, dict):
-            continue
-        for candidate in worker_text_candidates(event):
-            candidates.append(candidate)
-        delta = event.get("delta")
-        if event.get("type") != "content_block_delta" and isinstance(delta, dict):
-            raw_delta = delta.get("text") or delta.get("content")
-            if isinstance(raw_delta, str) and raw_delta.strip():
-                chunks.append(raw_delta)
-        if event.get("type") == "content_block_delta" and isinstance(delta, dict):
-            raw_delta = delta.get("text")
-            if isinstance(raw_delta, str) and raw_delta.strip():
-                chunks.append(raw_delta)
-    if chunks:
-        candidates.append("".join(chunks).strip())
-    meaningful = [candidate.strip() for candidate in candidates if looks_like_meaningful_read_only_output(candidate)]
-    if meaningful:
-        return meaningful[-1]
-    return None
+    return _extract_worker_partial_text(path)
 
 
 def worker_text_candidates(event: dict[str, Any]) -> list[str]:
-    candidates: list[str] = []
-    raw_result = event.get("result")
-    if isinstance(raw_result, str) and raw_result.strip():
-        candidates.append(raw_result)
-    raw_text = event.get("text")
-    if isinstance(raw_text, str) and raw_text.strip():
-        candidates.append(raw_text)
-    message = event.get("message")
-    if isinstance(message, dict):
-        content = message.get("content")
-        if isinstance(content, list):
-            text = "\n".join(
-                item.get("text", "")
-                for item in content
-                if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str)
-            ).strip()
-            if text:
-                candidates.append(text)
-        elif isinstance(content, str) and content.strip():
-            candidates.append(content)
-    part = event.get("part")
-    if isinstance(part, dict):
-        raw_part = part.get("text")
-        if isinstance(raw_part, str) and raw_part.strip():
-            candidates.append(raw_part)
-    return candidates
+    return _worker_text_candidates(event)
 
 
 def looks_like_meaningful_read_only_output(text: str) -> bool:
-    stripped = text.strip()
-    lowered = stripped.lower()
-    completion_markers = ("completed", "finished", "done", "完成", "已完成")
-    if len(stripped) >= 20 and any(marker in lowered for marker in completion_markers):
-        return True
-    if len(stripped) < 120:
-        return False
-    exploratory_markers = (
-        "i'll inspect",
-        "i will inspect",
-        "let me inspect",
-        "let me check",
-        "i need to inspect",
-        "i'll read",
-        "i will read",
-        "先检查",
-        "先看",
-        "我先",
-    )
-    if any(marker in lowered for marker in exploratory_markers) and len(stripped) < 500:
-        return False
-    result_markers = (
-        "summary",
-        "overview",
-        "risk",
-        "recommend",
-        "next",
-        "changed_files",
-        "验收",
-        "结论",
-        "风险",
-        "建议",
-        "下一步",
-        "候选",
-    )
-    return any(marker in lowered for marker in result_markers)
+    return _looks_like_meaningful_read_only_output(text)
 
 
 def read_only_result_can_finish(task: dict[str, Any], worker_result: Any) -> bool:
@@ -164,22 +43,8 @@ def read_only_failure_summary(
 ) -> str | None:
     if task_requires_diff(task) or getattr(worker_result, "changed_files", []):
         return None
-    if not failure or failure.failure_reason not in {"max_turns_no_diff", "worker_no_diff"}:
-        return None
-    stdout_path = getattr(worker_result, "stdout_path", None)
-    summary = extract_worker_partial_text(Path(str(stdout_path))) if stdout_path else None
-    if summary:
-        setattr(worker_result, "partial_result", True)
-        return f"Partial read-only result salvaged after worker budget limit.\n\n{summary}"
-    raw_summary = str(getattr(worker_result, "summary", "") or "").strip()
-    if (
-        raw_summary
-        and raw_summary.lower() not in {"claude code worker failed", "opencode worker failed"}
-        and looks_like_meaningful_read_only_output(raw_summary)
-    ):
-        setattr(worker_result, "partial_result", True)
-        return f"Partial read-only result salvaged after worker budget limit.\n\n{raw_summary}"
-    return None
+    result = ReadOnlySalvagePolicy().salvage(task, worker_result, failure)
+    return result.summary if result else None
 
 
 def read_only_review(task: dict[str, Any], reason: str = "read_only_no_diff") -> dict[str, Any]:

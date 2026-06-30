@@ -518,6 +518,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_worker_prompt_profiles.py`, `tests/test_worker_prompt_seed.py`, plus existing scheduler and multimodal prompt coverage.
    - Next: use these boundaries to harden `code_contract_audit` partial-result salvage without bloating the base prompt builder.
 
+4ab. **Read-only salvage policy**
+   - Implemented in `orchestrator/read_only_salvage.py`.
+   - Owns salvageability rules for read-only worker failures, worker-stream text extraction, structured thinking fallback for `code_contract_audit`, and guardrails that prevent failed result events from being treated as success.
+   - `read_only_completion.py` keeps backward-compatible function names but delegates salvage behavior to `ReadOnlySalvagePolicy`.
+   - Patterns: Strategy for partial-result recovery, Chain of Responsibility over stream result / assistant text / deltas / structured thinking / raw summary, Information Expert for read-only salvage heuristics.
+   - Tests: `tests/test_read_only_salvage.py` plus scheduler, failure-classifier, worker-attempt, terminal-handler, stale-reaper, and artifact-repair coverage.
+   - Next: run a focused `code_contract_audit` sample to confirm Round 3-style `silent_max_turns_no_output` now becomes `COMPLETED_WITH_PARTIAL_ARTIFACTS` when useful structured text exists.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.
