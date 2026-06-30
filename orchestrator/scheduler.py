@@ -11,9 +11,6 @@ from .baselines import build_manual_baseline, build_replay_baseline
 from .codex_usage_recording import CodexUsageRecorder
 from .config import ensure_runtime_dirs
 from .db import TaskDB
-from .failure_classifier import (
-    FailureClassification,
-)
 from .multimodal import load_image_inputs
 from .pr import create_pr_or_patch
 from .project_registry import detect_project, load_projects
@@ -43,6 +40,7 @@ from .read_only_completion import (
 )
 from .stale_worker_reaper import StaleWorkerReaper
 from .task_execution_gate import TaskExecutionGate
+from .task_attempt_runner import TaskAttemptRunner
 from .task_result_document import build_final_markdown as _final_md
 from .task_review import TaskReviewRunner
 from .task_submission import TaskSubmissionBuilder
@@ -54,12 +52,8 @@ from .worktree import prepare_worktree
 from .approval_policy_service import ApprovalPolicyService
 from .attempt_recording import AttemptMetricsRecorder
 from .policy_learning import PolicyLearningRecorder
-from .post_attempt_policy import decide_post_attempt
 from .process_control import request_cancel
 from .worker_permission_audit import WorkerPermissionAuditor
-from .worker_attempts import (
-    build_retry_chain as _build_retry_chain,
-)
 from .worker_attempt_executor import WorkerAttemptExecutor
 from .worker_prompt import build_worker_prompt
 from .world_runtime_service import WorldRuntimeService
@@ -124,6 +118,14 @@ class OrchestratorService:
             now=_now,
             set_status=self._set_status,
             build_prompt=_worker_prompt,
+        )
+        self.attempt_runner = TaskAttemptRunner(
+            artifacts=self.artifacts,
+            attempt_executor=self.attempt_executor,
+            workers=WORKERS,
+            default_worker=ClaudeCodeWorker(),
+            set_status=self._set_status,
+            write_attempt_metrics=self._write_attempt_metrics,
         )
         self.verification_runner = TaskVerificationRunner(
             artifacts=self.artifacts,
@@ -580,156 +582,30 @@ class OrchestratorService:
                 self._set_status(task_id, "WORKTREE_READY", "agents_md_skipped", agents_inject.__dict__)
 
         # ── Retry chain with escalation ──
-        retry_chain = _build_retry_chain(route, task)
-        final_result = None
-        verify_result = None
-        review = None
-        last_failure: FailureClassification | None = None
-        last_attempt: dict[str, Any] | None = None
-
-        for idx, attempt in enumerate(retry_chain):
-            attempt = apply_read_budget_to_route(attempt, task)
-            outcome = self.attempt_executor.run(
-                task_id=task_id,
-                task=task,
-                worktree_path=Path(wt.path),
-                attempt=attempt,
-                attempt_no=idx + 1,
-                dry_run=dry_run,
-            )
-            attempt = outcome.attempt
-            worker_result = outcome.worker_result
-            failure = outcome.failure
-
-            if outcome.kind == "preflight_denied":
-                self._set_status(
-                    task_id,
-                    "BLOCKED",
-                    "permission_denied",
-                    {"phase": "preflight", "permission": outcome.permission, "failure": failure.to_dict() if failure else None},
+        attempt_run = self.attempt_runner.run(
+            task_id=task_id,
+            task=task,
+            route=route,
+            worktree_path=Path(wt.path),
+            dry_run=dry_run,
+        )
+        if attempt_run.terminal_status:
+            self._set_status(task_id, attempt_run.terminal_status, attempt_run.terminal_event or "", attempt_run.terminal_payload)
+        if not attempt_run.completed:
+            if attempt_run.policy_signal:
+                signal = attempt_run.policy_signal
+                self._record_policy_learning(
+                    task,
+                    project,
+                    success=signal.success,
+                    worker=signal.worker,
+                    model=signal.model,
+                    rollback=signal.rollback,
+                    incident=signal.incident,
                 )
-                self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], incident=True)
-                return
-            if outcome.kind == "preflight_requires_ask":
-                self._set_status(
-                    task_id,
-                    "HARD_APPROVAL_WAITING",
-                    "permission_requires_approval",
-                    {"phase": "preflight", "permission": outcome.permission},
-                )
-                self.artifacts.write_text(
-                    task_id,
-                    "approval_explanation.md",
-                    "Static worker permissions require explicit approval for declared write paths.\n",
-                )
-                return
-            if outcome.kind == "worker_exception":
-                self._set_status(
-                    task_id,
-                    "FAILED_FINAL",
-                    "worker_exception",
-                    {"failure_reason": failure.failure_reason, "failure": failure.to_dict(), "attempt": idx + 1},
-                )
-                self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], incident=True)
-                return
-            if outcome.kind == "diff_denied":
-                self._set_status(
-                    task_id,
-                    "BLOCKED",
-                    "permission_denied",
-                    {"phase": "diff", "permission": outcome.permission, "failure": failure.to_dict() if failure else None},
-                )
-                self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], incident=True)
-                return
-            if outcome.kind == "diff_requires_ask":
-                self._set_status(
-                    task_id,
-                    "HARD_APPROVAL_WAITING",
-                    "permission_requires_approval",
-                    {"phase": "diff", "permission": outcome.permission},
-                )
-                return
-            if outcome.kind != "completed" or worker_result is None:
-                self._set_status(
-                    task_id,
-                    "FAILED_FINAL",
-                    "worker_unknown_attempt_outcome",
-                    {"attempt": idx + 1, "kind": outcome.kind},
-                )
-                self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], incident=True)
-                return
-
-            if failure:
-                last_failure = failure
-                last_attempt = attempt
-
-            decision = decide_post_attempt(
-                task=task,
-                worker_result=worker_result,
-                failure=failure,
-                attempt=attempt,
-                attempt_index=idx,
-                retry_chain=retry_chain,
-                dry_run=dry_run,
-                worker_name=WORKERS.get(attempt["worker"], WORKERS["claude_code"]).name,
-            )
-
-            if decision.kind == "success":
-                final_result = worker_result
-                last_attempt = attempt
-                break
-
-            if decision.kind == "no_diff":
-                failure = decision.failure
-                last_failure = failure
-                last_attempt = attempt
-                self.artifacts.write_json(task_id, "result.json", worker_result.__dict__)
-                self._write_attempt_metrics(task_id, idx + 1, attempt, worker_result, failure)
-                self._set_status(task_id, decision.status, decision.event_type, decision.payload or {})
-                if idx + 1 < len(retry_chain):
-                    continue
-                self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], rollback=True)
-                return
-
-            if decision.kind == "recover_failed_diff":
-                self.artifacts.write_json(task_id, "result.json", worker_result.__dict__)
-                self._set_status(task_id, decision.status, decision.event_type, decision.payload or {})
-                final_result = worker_result
-                last_attempt = attempt
-                break
-
-            if decision.kind == "blocked":
-                self._set_status(task_id, decision.status, decision.event_type, decision.payload or {})
-                self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], incident=True)
-                return
-
-            if decision.kind == "cancelled":
-                self._set_status(task_id, decision.status, decision.event_type, decision.payload or {})
-                return
-
-            if decision.kind == "non_retryable_failure":
-                self._set_status(task_id, decision.status, decision.event_type, decision.payload or {})
-                self._record_policy_learning(task, project, success=False, worker=attempt["worker"], model=attempt["model"], incident=True)
-                return
-
-            if decision.kind == "retry":
-                self._set_status(task_id, decision.status, decision.event_type, decision.payload or {})
-                continue
-
-        # ── All attempts exhausted ──
-        if not final_result:
-            payload = {"total_attempts": len(retry_chain)}
-            if last_failure:
-                payload.update({"failure_reason": last_failure.failure_reason, "failure": last_failure.to_dict()})
-            if last_attempt:
-                payload["last_attempt"] = {
-                    "worker": last_attempt.get("worker"),
-                    "model": last_attempt.get("model"),
-                    "attempt": last_attempt.get("attempt_no"),
-                }
-            self._set_status(task_id, "FAILED_FINAL", "all_attempts_failed", payload)
-            self._record_policy_learning(task, project, success=False, worker=retry_chain[-1]["worker"], model=retry_chain[-1]["model"], rollback=True)
             return
+        final_result = attempt_run.final_result
+        last_attempt = attempt_run.last_attempt
 
         if _worker_result_is_degraded_mock(final_result):
             terminal = self.terminal_handler.handle_degraded_mock(

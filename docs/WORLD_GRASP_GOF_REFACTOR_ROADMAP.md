@@ -422,6 +422,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_task_execution_gate.py` plus existing scheduler, risk policy, and approval policy coverage.
    - Next: split retry-attempt sequencing from `_execute` so worker attempt decisions can be tested without the full scheduler.
 
+4p. **Task attempt runner**
+   - Implemented in `orchestrator/task_attempt_runner.py`.
+   - Owns retry-chain construction, worker attempt execution sequencing, post-attempt decision interpretation, retry event emission, final worker-result selection, and terminal attempt failure signals.
+   - Patterns: Controller for worker-attempt workflow, Strategy composition over retry-chain and post-attempt policies, Command-style terminal result for scheduler continuation.
+   - Scheduler now delegates the retry loop and only handles the returned terminal status or continues into degraded/verify/review/publish.
+   - Tests: `tests/test_task_attempt_runner.py` plus existing scheduler, worker-attempt executor, and post-attempt policy coverage.
+   - Next: split the verify/review/publish continuation into a tail pipeline object so `_execute` becomes gate -> route -> worktree -> attempts -> tail.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.
