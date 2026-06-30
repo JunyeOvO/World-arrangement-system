@@ -342,6 +342,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Implemented in `orchestrator/policy_learning.py`.
    - Next: collapse remaining scheduler wrappers once call sites are simplified.
 
+4f. **Terminal task handler**
+   - Implemented in `orchestrator/terminal_handlers.py`.
+   - Owns degraded mock completion and read-only completion artifact writes, Codex usage context, attempt metrics, and scheduler return signals.
+   - Patterns: Controller for special terminal paths, Facade over artifact/metrics/review side effects, Factory-style degraded mock review payload.
+   - Scheduler now delegates these paths and only applies the returned status/event/policy-learning signal.
+   - Tests: `tests/test_terminal_handlers.py`.
+   - Next: apply the same terminal-handler boundary to stale worker reaping if the reaper grows more artifact-writing behavior.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.

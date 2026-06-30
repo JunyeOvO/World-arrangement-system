@@ -16,7 +16,6 @@ from .constants import DEFAULT_CLAUDE_CMD, DEFAULT_OPENCODE_CMD
 from .db import TaskDB
 from .failure_classifier import (
     FailureClassification,
-    classify_review_failure,
 )
 from .multimodal import load_image_inputs
 from .outcomes import derive_task_outcome
@@ -57,6 +56,7 @@ from .task_routing import (
 )
 from .task_result_document import build_final_markdown as _final_md
 from .task_review import TaskReviewRunner
+from .terminal_handlers import TerminalTaskHandler
 from .task_verification import TaskVerificationRunner
 from .verifier import verify, write_verify_result
 from .agents_md import inject_agents_md
@@ -128,6 +128,12 @@ class OrchestratorService:
             db=self.db,
             publish_func=create_pr_or_patch,
             now=_now,
+        )
+        self.terminal_handler = TerminalTaskHandler(
+            artifacts=self.artifacts,
+            metrics_recorder=self.attempt_metrics,
+            dry_verify_func=_dry_verify,
+            record_review_codex_usage=self._record_review_codex_usage,
         )
         self.policy_learning = PolicyLearningRecorder(self.db)
 
@@ -948,55 +954,22 @@ class OrchestratorService:
             return
 
         if _worker_result_is_degraded_mock(final_result):
-            verify_result = _dry_verify(task)
-            write_verify_result(verify_result, Path(task["run_dir"]) / "verify" / "verify.json")
-            self.artifacts.write_json(task_id, "verify/changed_files.json", verify_result.changed_files)
-            review = _degraded_mock_review(task, final_result, dry_run=dry_run)
-            self.artifacts.write_json(task_id, "review/review.json", review)
-            self._record_review_codex_usage(
-                task_id,
-                {
-                    "task_id": task_id,
-                    "risk_level": task["risk_level"],
-                    "dry_run": dry_run,
-                    "tests_passed": verify_result.tests_passed,
-                    "forbidden_paths_touched": False,
-                    "changed_files": verify_result.changed_files,
-                    "worker_degraded_mock": True,
-                },
-                review,
+            terminal = self.terminal_handler.handle_degraded_mock(
+                task_id=task_id,
+                task=task,
+                route=route,
+                worker_result=final_result,
+                last_attempt=last_attempt,
+                dry_run=dry_run,
             )
-            self.artifacts.write_text(
-                task_id,
-                "final.md",
-                _final_md(task, route, final_result.__dict__, verify_result.to_dict(), review),
+            self._set_status(task_id, terminal.status, terminal.event_type, terminal.payload)
+            self._record_policy_learning(
+                task,
+                project,
+                success=terminal.policy_success,
+                worker=route["selected_worker"],
+                model=route["selected_model"],
             )
-            if last_attempt:
-                failure = classify_review_failure({**review, "available": False})
-                self._write_attempt_metrics(
-                    task_id,
-                    int(last_attempt.get("attempt_no", 1)),
-                    last_attempt,
-                    final_result,
-                    failure,
-                    build_passed=verify_result.build_passed,
-                    review_approved=False,
-                )
-            if dry_run:
-                self._set_status(
-                    task_id,
-                    "DRY_RUN_COMPLETED",
-                    "dry_run_completed",
-                    {"worker": final_result.__dict__, "review": review},
-                )
-            else:
-                self._set_status(
-                    task_id,
-                    "NEEDS_USER",
-                    "worker_degraded_mock_needs_user",
-                    {"worker": final_result.__dict__, "review": review},
-                )
-            self._record_policy_learning(task, project, success=False, worker=route["selected_worker"], model=route["selected_model"])
             return
 
         # ── Verify ──
@@ -1031,53 +1004,26 @@ class OrchestratorService:
             return
 
         if _read_only_result_can_finish(task, final_result):
-            partial_result = bool(getattr(final_result, "partial_result", False))
-            completion_status = "COMPLETED_WITH_PARTIAL_ARTIFACTS" if partial_result else "COMPLETED_WITH_ARTIFACTS"
-            completion_event = "read_only_partial_completed" if partial_result else "read_only_completed"
-            review = _read_only_review(
-                task,
-                "read_only_partial_salvage" if partial_result else "read_only_no_diff",
+            terminal = self.terminal_handler.handle_read_only_completion(
+                task_id=task_id,
+                task=task,
+                route=route,
+                worker_result=final_result,
+                verify_result=verify_result,
+                forbidden=forbidden,
+                last_attempt=last_attempt,
+                dry_run=dry_run,
             )
-            self.artifacts.write_json(task_id, "review/review.json", review)
-            self._record_review_codex_usage(
-                task_id,
-                {
-                    "task_id": task_id,
-                    "risk_level": task["risk_level"],
-                    "dry_run": dry_run,
-                    "tests_passed": verify_result.tests_passed,
-                    "forbidden_paths_touched": not forbidden.allowed,
-                    "changed_files": verify_result.changed_files,
-                    "read_only": True,
-                },
-                review,
-            )
-            self.artifacts.write_text(task_id, "final.md", _final_md(task, route, final_result.__dict__, verify_result.to_dict(), review))
-            if last_attempt:
-                self._write_attempt_metrics(
-                    task_id,
-                    int(last_attempt.get("attempt_no", 1)),
-                    last_attempt,
-                    final_result,
-                    None,
-                    build_passed=verify_result.build_passed,
-                    review_approved=True,
-                )
-            self._set_status(
-                task_id,
-                completion_status,
-                completion_event,
-                {"worker": final_result.__dict__, "verify": verify_result.to_dict(), "review": review},
-            )
+            self._set_status(task_id, terminal.status, terminal.event_type, terminal.payload)
             self._record_policy_learning(
                 task,
                 project,
-                success=True,
+                success=terminal.policy_success,
                 worker=route["selected_worker"],
                 model=route["selected_model"],
-                tests_passed=verify_result.tests_passed,
-                codex_review_approved=True,
-                changed_paths=[],
+                tests_passed=terminal.tests_passed,
+                codex_review_approved=terminal.codex_review_approved,
+                changed_paths=terminal.changed_paths or [],
             )
             return
 
@@ -1460,23 +1406,6 @@ def _project_registration_health(project: dict[str, Any] | None, requested_repo_
 
 def _worker_result_is_degraded_mock(result: Any) -> bool:
     return bool(getattr(result, "mock_result", False) or getattr(result, "degraded", False))
-
-
-def _degraded_mock_review(task: dict[str, Any], worker_result: Any, dry_run: bool) -> dict[str, Any]:
-    reason = getattr(worker_result, "degradation_reason", None) or "worker returned a mock result"
-    return {
-        "approved": False,
-        "review_mode": "degraded_mock",
-        "degraded": True,
-        "degradation_reason": reason,
-        "available": False,
-        "risk_level": task.get("risk_level", "medium"),
-        "blocking_issues": ["real worker execution was not available"],
-        "non_blocking_issues": ["dry-run only; no real project analysis was performed"] if dry_run else [],
-        "required_changes": ["run the task with an available real worker before treating this as analysis"],
-        "final_recommendation": "degraded mock result; do not create PR",
-        "can_create_pr": False,
-    }
 
 
 def _read_json_if_exists(path: Path) -> dict[str, Any] | None:
