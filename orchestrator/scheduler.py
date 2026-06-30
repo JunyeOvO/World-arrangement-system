@@ -8,7 +8,7 @@ from typing import Any
 
 from .artifacts import ArtifactStore
 from .baselines import build_manual_baseline, build_replay_baseline
-from .codex_usage import build_codex_usage_event
+from .codex_usage_recording import CodexUsageRecorder
 from .config import ensure_runtime_dirs
 from .constants import DEFAULT_CLAUDE_CMD, DEFAULT_OPENCODE_CMD
 from .db import TaskDB
@@ -102,6 +102,11 @@ class OrchestratorService:
             metrics_recorder=self.attempt_metrics,
         )
         self.outcome_recorder = TaskOutcomeRecorder(db=self.db, artifacts=self.artifacts)
+        self.codex_usage = CodexUsageRecorder(
+            db=self.db,
+            artifacts=self.artifacts,
+            write_token_ledger=self.attempt_metrics.write_token_ledger,
+        )
         self.lifecycle = TaskLifecycleController(
             self.db,
             now=_now,
@@ -125,7 +130,7 @@ class OrchestratorService:
         )
         self.review_runner = TaskReviewRunner(
             review_func=run_codex_review,
-            record_codex_usage=self._record_review_codex_usage,
+            record_codex_usage=self.codex_usage.record_review_usage,
         )
         self.publish_runner = TaskPublishRunner(
             artifacts=self.artifacts,
@@ -137,7 +142,7 @@ class OrchestratorService:
             artifacts=self.artifacts,
             metrics_recorder=self.attempt_metrics,
             dry_verify_func=_dry_verify,
-            record_review_codex_usage=self._record_review_codex_usage,
+            record_review_codex_usage=self.codex_usage.record_review_usage,
         )
         self.stale_worker_reaper = StaleWorkerReaper(
             artifacts=self.artifacts,
@@ -382,40 +387,22 @@ class OrchestratorService:
         )
         self.db.append_event(task_id, "created", None, "QUEUED", {"dry_run": dry_run})
         self.artifacts.write_json(task_id, "task.json", task)
-        self._record_codex_usage(
-            build_codex_usage_event(
-                task_id=task_id,
-                phase="planning_dispatch",
-                input_payload={
-                    "project_id": project_id,
-                    "repo_path": project["repo"],
-                    "user_goal": user_goal,
-                    "risk_level": risk_level,
-                    "auto_execute": auto_execute,
-                    "auto_pr": task["auto_pr"],
-                    "dry_run": dry_run,
-                    "force_worker": force_worker,
-                    "force_model": force_model,
-                    "force_variant": force_variant,
-                    "has_images": bool(image_paths or image_base64),
-                    "task_mode": protocol["task_mode"],
-                    "expected_diff": protocol["expected_diff"],
-                    "verification_policy": protocol["verification_policy"],
-                    "read_budget_profile": protocol["read_budget_profile"],
-                    "read_budget": protocol["read_budget"],
-                    "project_memory_stats": memory_payload.get("memory", {}).get("stats", {}),
-                },
-                output_payload={
-                    "task_id": task_id,
-                    "status": "QUEUED",
-                    "run_dir": str(run_dir),
-                },
-                metadata={
-                    "measured": False,
-                    "scope": "codex_main_thread_task_spec_and_dispatch",
-                    "goal": "estimate Codex quota consumed before World worker execution",
-                },
-            )
+        self.codex_usage.record_planning_dispatch(
+            task_id=task_id,
+            project_id=project_id,
+            repo_path=project["repo"],
+            user_goal=user_goal,
+            risk_level=risk_level,
+            auto_execute=auto_execute,
+            auto_pr=task["auto_pr"],
+            dry_run=dry_run,
+            force_worker=force_worker,
+            force_model=force_model,
+            force_variant=force_variant,
+            has_images=bool(image_paths or image_base64),
+            protocol=protocol,
+            project_memory=memory_payload,
+            run_dir=str(run_dir),
         )
         if auto_execute:
             self._execute(task, project, dry_run=dry_run)
@@ -494,57 +481,6 @@ class OrchestratorService:
             "baseline": baseline,
             "token_ledger_path": str(Path(str(task["run_dir"])) / "token_ledger.json") if task.get("run_dir") else None,
         }
-
-    def _record_codex_usage(self, event: dict[str, Any]) -> None:
-        self.db.record_codex_usage_event(event)
-        phase = str(event.get("phase") or "unknown")
-        self.artifacts.write_json(event["task_id"], f"codex_usage/{phase}.json", event)
-        self.db.append_event(
-            event["task_id"],
-            "codex_usage_recorded",
-            None,
-            None,
-            {
-                "phase": phase,
-                "input_tokens": event.get("input_tokens", 0),
-                "output_tokens": event.get("output_tokens", 0),
-                "total_tokens": event.get("total_tokens", 0),
-                "actual_codex_used": bool(event.get("actual_codex_used")),
-                "estimation_method": event.get("estimation_method"),
-            },
-        )
-        self._write_token_ledger(event["task_id"])
-
-    def _record_review_codex_usage(
-        self,
-        task_id: str,
-        review_inputs: dict[str, Any],
-        review: dict[str, Any],
-    ) -> None:
-        self._record_codex_usage(
-            build_codex_usage_event(
-                task_id=task_id,
-                phase="world_review",
-                input_payload={
-                    "prompt_prefix": (
-                        "Review this orchestrator task. Output only JSON with keys "
-                        "approved,risk_level,blocking_issues,non_blocking_issues,required_changes,"
-                        "final_recommendation,can_create_pr."
-                    ),
-                    "inputs": review_inputs,
-                },
-                output_payload=review,
-                actual_codex_used=review.get("review_mode") == "codex" and not bool(review.get("degraded")),
-                metadata={
-                    "measured": False,
-                    "review_mode": review.get("review_mode"),
-                    "degraded": bool(review.get("degraded")),
-                    "available": bool(review.get("available")),
-                    "approved": bool(review.get("approved")),
-                    "scope": "codex_review_gate",
-                },
-            )
-        )
 
     def repair_task_artifacts(self, task_id: str | None = None, limit: int = 200) -> dict[str, Any]:
         return self.artifact_repair.repair_task_artifacts(task_id, limit)

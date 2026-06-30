@@ -374,6 +374,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_task_outcome_recording.py`.
    - Next: review remaining scheduler responsibilities around Codex usage recording and world-plan creation.
 
+4j. **Codex usage recorder**
+   - Implemented in `orchestrator/codex_usage_recording.py`.
+   - Owns planning-dispatch and world-review usage event construction, DB persistence, `codex_usage/*.json` artifacts, audit events, and token-ledger refresh callbacks.
+   - Patterns: Facade over usage accounting side effects, Information Expert for Codex quota attribution metadata.
+   - Scheduler now delegates planning dispatch usage and review usage recording to `CodexUsageRecorder`.
+   - Tests: `tests/test_codex_usage_recording.py`.
+   - Next: split World setup / world-plan creation out of scheduler or extract task submission construction.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.
