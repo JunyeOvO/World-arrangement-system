@@ -34,14 +34,13 @@ from .project_commands import (
 )
 from .reviewer import run_codex_review
 from .read_only_completion import (
-    read_only_result_can_finish as _read_only_result_can_finish,
     task_requires_diff as _task_requires_diff,
     task_requests_project_verification as _task_requests_project_verification,
 )
 from .stale_worker_reaper import StaleWorkerReaper
+from .task_completion_pipeline import TaskCompletionPipeline
 from .task_execution_gate import TaskExecutionGate
 from .task_attempt_runner import TaskAttemptRunner
-from .task_result_document import build_final_markdown as _final_md
 from .task_review import TaskReviewRunner
 from .task_submission import TaskSubmissionBuilder
 from .terminal_handlers import TerminalTaskHandler
@@ -147,6 +146,16 @@ class OrchestratorService:
             metrics_recorder=self.attempt_metrics,
             dry_verify_func=_dry_verify,
             record_review_codex_usage=self.codex_usage.record_review_usage,
+        )
+        self.completion_pipeline = TaskCompletionPipeline(
+            artifacts=self.artifacts,
+            terminal_handler=self.terminal_handler,
+            verification_runner=self.verification_runner,
+            review_runner=self.review_runner,
+            publish_runner=self.publish_runner,
+            set_status=self._set_status,
+            record_policy_learning=self._record_policy_learning,
+            write_attempt_metrics=self._write_attempt_metrics,
         )
         self.stale_worker_reaper = StaleWorkerReaper(
             artifacts=self.artifacts,
@@ -607,162 +616,17 @@ class OrchestratorService:
         final_result = attempt_run.final_result
         last_attempt = attempt_run.last_attempt
 
-        if _worker_result_is_degraded_mock(final_result):
-            terminal = self.terminal_handler.handle_degraded_mock(
-                task_id=task_id,
-                task=task,
-                route=route,
-                worker_result=final_result,
-                last_attempt=last_attempt,
-                dry_run=dry_run,
-            )
-            self._set_status(task_id, terminal.status, terminal.event_type, terminal.payload)
-            self._record_policy_learning(
-                task,
-                project,
-                success=terminal.policy_success,
-                worker=route["selected_worker"],
-                model=route["selected_model"],
-            )
-            return
-
-        # ── Verify ──
-        self._set_status(task_id, "VERIFYING", "verify_started", {})
-        verification = self.verification_runner.run(
-            task_id=task_id,
-            task=task,
-            worktree_path=Path(wt.path),
-            worker_result=final_result,
-            last_attempt=last_attempt,
-            dry_run=dry_run,
-        )
-        verify_result = verification.verify_result
-        forbidden = verification.forbidden
-
-        if not verification.passed:
-            failure = verification.failure
-            assert failure is not None
-            if last_attempt:
-                self._write_attempt_metrics(
-                    task_id,
-                    int(last_attempt.get("attempt_no", 1)),
-                    last_attempt,
-                    final_result,
-                    failure,
-                    build_passed=verify_result.build_passed,
-                )
-            self._set_status(task_id, "FAILED_FINAL", "verify_failed",
-                             {"failure_reason": failure.failure_reason, "failure": failure.to_dict(),
-                              "verify": verify_result.to_dict(), "forbidden": forbidden.__dict__})
-            self._record_policy_learning(task, project, success=False, worker=route["selected_worker"], model=route["selected_model"])
-            return
-
-        if _read_only_result_can_finish(task, final_result):
-            terminal = self.terminal_handler.handle_read_only_completion(
-                task_id=task_id,
-                task=task,
-                route=route,
-                worker_result=final_result,
-                verify_result=verify_result,
-                forbidden=forbidden,
-                last_attempt=last_attempt,
-                dry_run=dry_run,
-            )
-            self._set_status(task_id, terminal.status, terminal.event_type, terminal.payload)
-            self._record_policy_learning(
-                task,
-                project,
-                success=terminal.policy_success,
-                worker=route["selected_worker"],
-                model=route["selected_model"],
-                tests_passed=terminal.tests_passed,
-                codex_review_approved=terminal.codex_review_approved,
-                changed_paths=terminal.changed_paths or [],
-            )
-            return
-
-        # ── Review ──
-        self._set_status(task_id, "CODEX_REVIEWING", "review_started", {})
-        review_outcome = self.review_runner.run(
-            task_id=task_id,
-            task=task,
-            verify_result=verify_result,
-            forbidden=forbidden,
-            dry_run=dry_run,
-        )
-        review = review_outcome.review
-        if review_outcome.degraded_blocks_publish:
-            failure = review_outcome.failure
-            assert failure is not None
-            if last_attempt:
-                self._write_attempt_metrics(
-                    task_id,
-                    int(last_attempt.get("attempt_no", 1)),
-                    last_attempt,
-                    final_result,
-                    failure,
-                    build_passed=verify_result.build_passed,
-                    review_approved=False,
-                )
-            self.artifacts.write_text(task_id, "final.md", _final_md(task, route, final_result.__dict__, verify_result.to_dict(), review))
-            self._set_status(task_id, "NEEDS_REVIEW", "review_degraded_needs_review",
-                             {"failure_reason": failure.failure_reason, "failure": failure.to_dict(), "review": review})
-            self._record_policy_learning(task, project, success=False, worker=route["selected_worker"], model=route["selected_model"])
-            return
-        if not review_outcome.passed:
-            failure = review_outcome.failure
-            assert failure is not None
-            if last_attempt:
-                self._write_attempt_metrics(
-                    task_id,
-                    int(last_attempt.get("attempt_no", 1)),
-                    last_attempt,
-                    final_result,
-                    failure,
-                    build_passed=verify_result.build_passed,
-                    review_approved=False,
-                )
-            self._set_status(task_id, "FAILED_FINAL", "review_failed",
-                             {"failure_reason": failure.failure_reason, "failure": failure.to_dict(), "review": review})
-            self._record_policy_learning(task, project, success=False, worker=route["selected_worker"], model=route["selected_model"])
-            return
-        if last_attempt:
-            self._write_attempt_metrics(
-                task_id,
-                int(last_attempt.get("attempt_no", 1)),
-                last_attempt,
-                final_result,
-                None,
-                build_passed=verify_result.build_passed,
-                review_approved=True,
-            )
-
-        # ── Policy Learning ──
-        self._set_status(task_id, "POLICY_LEARNING", "policy_learning", {})
-        self._record_policy_learning(
-            task, project, success=True,
-            worker=route["selected_worker"], model=route["selected_model"],
-            tests_passed=verify_result.tests_passed,
-            codex_review_approved=review.get("approved", False),
-            changed_paths=verify_result.changed_files,
-        )
-
-        # ── PR / Patch ──
-        self._set_status(task_id, "PLANNED", "review_passed", review)
-        final = _final_md(task, route, final_result.__dict__, verify_result.to_dict(), review)
-        self.artifacts.write_text(task_id, "final.md", final)
-
-        publish = self.publish_runner.run(
+        self.completion_pipeline.run(
             task_id=task_id,
             task=task,
             project=project,
+            route=route,
+            worker_result=final_result,
+            last_attempt=last_attempt,
             worktree_path=Path(wt.path),
             branch=wt.branch,
+            dry_run=dry_run,
         )
-        self._set_status(task_id, publish.status, publish.event_type, publish.payload)
-        if publish.pr_created:
-            self._record_policy_learning(task, project, success=True, worker=route["selected_worker"],
-                                         model=route["selected_model"], pr_created=True)
 
     def _run_mimo_vision(self, task: dict[str, Any], dry_run: bool = False) -> dict[str, Any]:
         images = load_image_inputs(task.get("image_paths"), task.get("image_base64"))
@@ -872,10 +736,6 @@ def _project_registration_health(project: dict[str, Any] | None, requested_repo_
         "issues": issues,
         "warnings": warnings,
     }
-
-
-def _worker_result_is_degraded_mock(result: Any) -> bool:
-    return bool(getattr(result, "mock_result", False) or getattr(result, "degraded", False))
 
 
 def _read_json_if_exists(path: Path) -> dict[str, Any] | None:

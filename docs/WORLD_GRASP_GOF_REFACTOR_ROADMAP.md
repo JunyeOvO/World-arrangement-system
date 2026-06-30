@@ -430,6 +430,14 @@ uv run pytest tests/test_scheduler.py tests/test_mimo_vision_adapter.py tests/te
    - Tests: `tests/test_task_attempt_runner.py` plus existing scheduler, worker-attempt executor, and post-attempt policy coverage.
    - Next: split the verify/review/publish continuation into a tail pipeline object so `_execute` becomes gate -> route -> worktree -> attempts -> tail.
 
+4q. **Task completion pipeline**
+   - Implemented in `orchestrator/task_completion_pipeline.py`.
+   - Owns the post-attempt tail: degraded mock handling, verification, read-only completion, Codex review, policy-learning checkpoints, final markdown writes, and publish delegation.
+   - Patterns: Pipeline / Controller for completion flow, Facade over terminal / verify / review / publish runners, Command-style status application through injected callbacks.
+   - Scheduler now delegates the full completion tail and `_execute` is reduced to gate -> route -> worktree/multimodal setup -> attempts -> completion pipeline.
+   - Tests: `tests/test_task_completion_pipeline.py` plus existing scheduler, terminal handler, verification, review, and publish coverage.
+   - Next: extract worktree and multimodal setup into a preparation service, then review whether remaining scheduler wrappers are thin enough to keep.
+
 5. **Console query view models**
    - Keep DB queries, dashboard status derivation, and display serialization separated.
    - Candidate modules already partly exist under `orchestrator/console/`; continue splitting behavior from presentation.
