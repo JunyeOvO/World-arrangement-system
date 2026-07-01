@@ -7,17 +7,17 @@
 
 ## 一句话定位
 
-World 系统是一个以 Codex 为入口、MCP Orchestrator 为调度核心，连接 Claude Code、OpenCode、Codex Review 等 Agent 与固定 LLM 组合的多模型全自动开发中枢。
+World 系统是一个以 Codex 为入口、World Core 为调度核心，连接 Claude Code、OpenCode、Codex Review 等执行与审查能力的本地受控执行后端。
 
 ## 模块命名
 
 | World 名称 | 技术实现 | 说明 |
 |---|---|---|
-| World Core | MCP Orchestrator | 调度核心：路由、审批、状态机、测试、PR Gate |
+| World Core | Orchestrator | 调度核心：路由、审批、状态机、测试、PR Gate |
 | World Router | Router V2 | 可解释任务路由系统 |
 | World Guard | ApprovalGraph / RiskPolicy | 安全审批与风险策略 |
 | World Workers | Claude Code / OpenCode | 执行 Agent 层 |
-| World Review | Codex / GPT-5.5 final review | 最终审查 |
+| World Review | Codex final review | 最终审查 |
 | World Registry | Adaptive Project Layer | 项目注册与自适应 |
 | World Workbench | worktree / artifacts / diff | 隔离工作区 |
 | World CLI | ai-dispatcher | 命令行入口 |

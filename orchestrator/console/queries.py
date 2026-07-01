@@ -18,6 +18,7 @@ from orchestrator.outcomes import derive_task_outcome, should_record_outcome, su
 
 from .display_names import display_agent_name, display_model_name, display_route_tree
 from .alerts import evaluate_alerts
+from .metrics_usage import build_metrics_usage
 from .pricing import calculate_token_cost_usd, has_price
 from .serializers import (
     alert_view,
@@ -260,42 +261,7 @@ class ConsoleQueries:
 
     def metrics_usage(self, limit: int = 200) -> dict[str, Any]:
         rows = [metric_view(row) for row in self.db.list_recent_task_metrics(limit=limit)]
-        cost_by_day_model: dict[tuple[str, str], float] = {}
-        dates: set[str] = set()
-        models: set[str] = set()
-        calls: list[dict[str, Any]] = []
-        for row in rows:
-            created_at = str(row.get("created_at") or "")
-            date = _metric_date(created_at)
-            model = str(row.get("model") or "unknown")
-            cost = calculate_token_cost_usd(row)
-            dates.add(date)
-            models.add(model)
-            cost_by_day_model[(date, model)] = cost_by_day_model.get((date, model), 0.0) + cost
-            calls.append({
-                "created_at": created_at,
-                "date": date,
-                "model": model,
-                "worker": row.get("worker") or "",
-                "input_tokens": int(row.get("input_tokens") or 0),
-                "output_tokens": int(row.get("output_tokens") or 0),
-                "cache_read_input_tokens": int(row.get("cache_read_input_tokens") or 0),
-                "cost_usd": round(cost, 6),
-                "task_id": row.get("task_id") or "",
-                "attempt_no": row.get("attempt_no"),
-                "session": _session_label(str(row.get("task_id") or "")),
-            })
-        return {
-            "cost_series": {
-                "dates": sorted(dates),
-                "models": sorted(models),
-                "rows": [
-                    {"date": date, "model": model, "cost_usd": round(cost, 6)}
-                    for (date, model), cost in sorted(cost_by_day_model.items())
-                ],
-            },
-            "calls": calls,
-        }
+        return build_metrics_usage(rows)
 
     def metrics_efficiency(self, reference_model: str = "opencode-go/glm-5.2") -> dict[str, Any]:
         rows = self._metric_rows()
@@ -548,12 +514,6 @@ def _control_heartbeat_live(heartbeat: dict[str, Any]) -> bool:
     return ts is not None and time.time() - ts <= HEARTBEAT_FRESH_SECONDS
 
 
-def _metric_date(created_at: str) -> str:
-    if not created_at:
-        return "unknown"
-    return created_at[:10]
-
-
 def _metric_int(value: Any) -> int:
     try:
         return int(value or 0)
@@ -716,10 +676,6 @@ def _baseline_comparison_summary(db: TaskDB, tasks: list[dict[str, Any]]) -> dic
         ),
         "rows": rows[:20],
     }
-
-
-def _session_label(task_id: str) -> str:
-    return task_id[-8:] if len(task_id) > 8 else task_id
 
 
 def _normalize_big_status(value: str | None) -> str | None:

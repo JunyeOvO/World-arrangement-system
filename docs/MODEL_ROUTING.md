@@ -13,7 +13,7 @@ World Router only routes to these agent + LLM combinations:
 | claude code + Mimo V2.5 | `claude_code` | `mimo_v25` | multimodal/UI/design analysis |
 | claude code + Mimo V2.5 pro | `claude_code` | `mimo_v25_pro` | multimodal-to-code and stronger MiMo coding tasks |
 | opencode + GLM 5.2 | `opencode` | `opencode-go/glm-5.2` | complex coding, hard bugfixes, GLM escalation |
-| codex + GPT 5.5 | `codex_review` | `codex_reviewer` | final World Review |
+| codex review | `codex_review` | `codex_reviewer` | final World Review |
 
 `selected_worker` and `selected_model` remain compatibility fields. New route payloads also include `selected_agent`, `selected_llm`, and `agent_llm`.
 
@@ -44,7 +44,7 @@ Tier-specific behavior:
 | claude code + Mimo V2.5 | medium effort | high effort | max effort |
 | claude code + Mimo V2.5 pro | high effort | high effort | max effort |
 | opencode + GLM 5.2 | omit `--variant` | `--variant high` | `--variant max` |
-| codex + GPT 5.5 | high review effort | high review effort | max review effort |
+| codex review | high review effort | high review effort | max review effort |
 
 ## Hard Boundaries
 

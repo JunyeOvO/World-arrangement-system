@@ -42,7 +42,7 @@ prompts/              worker and review prompts
 schemas/              JSON schema contracts
 scripts/              helper scripts
 tests/                pytest suite
-docs/                 architecture, rollout plans, status design, capability reports
+docs/                 current docs plus archived historical reports under docs/archive/
 ```
 
 ## Supported Agent / Model Names

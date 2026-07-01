@@ -47,7 +47,8 @@ OpenCode agent:
 Codex agent:
 
 - Only World Review route
-- LLM: GPT 5.5
+- Uses Codex review context through the configured review route; this document
+  does not pin an external model version.
 
 There is no independent MiMo worker in the current router. MiMo V2.5 and MiMo V2.5 pro run through Claude Code.
 

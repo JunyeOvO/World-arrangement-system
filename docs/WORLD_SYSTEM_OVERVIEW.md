@@ -1,46 +1,69 @@
-# World 系统概述
+# World System Overview
 
-> 兼容说明：本仓库早期名称为 ai-orchestrator-v1。
+> Legacy compatibility: this repository was originally named
+> `ai-orchestrator-v1`. The CLI command remains `ai-dispatcher`.
 
-## 定位
+## Position
 
-World 系统是一个以 Codex 为入口、MCP Orchestrator 为调度核心，连接 Claude Code、OpenCode、Codex Review 等 Agent 与固定 LLM 组合的多模型全自动开发中枢。
+World is a local execution backend for Codex-driven software work. Codex remains
+the user-facing planner, dispatcher, and final judgment layer. World handles
+bounded worker execution, evidence collection, verification, review artifacts,
+token/cost accounting, and Console visibility.
 
-## 架构
+World is intentionally not a fully autonomous production coding agent today:
 
+- It does not auto-merge.
+- It does not run high-risk changes without review.
+- It treats read-only assistance as more mature than patch execution.
+- It records evidence so Codex can make the final call.
+
+## Architecture
+
+```text
+Codex (/world entry)
+  |
+  v
+World CLI / MCP tools (ai-dispatcher)
+  |
+  v
+World Core
+  |- Router: task routing to agent + LLM combinations
+  |- Guard: safety policy, approvals, forbidden paths
+  |- Workers: Claude Code and OpenCode adapters
+  |- Workbench: isolated worktree plus artifacts
+  |- Verifier: test/build/evidence checks
+  |- Review: Codex final review
+  |- Registry: project detection and adaptation
+  `- Console: status, tasks, metrics, cost, alerts
 ```
-Codex (用户入口)
-  │
-  ▼
-World CLI (ai-dispatcher)
-  │
-  ▼
-World Core (MCP Orchestrator)
-  ├─ World Router ──→ 任务路由到最佳 Agent + LLM
-  ├─ World Guard  ──→ 安全审批 + 风险策略
-  ├─ World Workers ──→ Claude Code / OpenCode
-  ├─ World Review ──→ Codex / GPT-5.5 最终审查
-  └─ World Registry ──→ 项目检测与自适应
-        │
-        ▼
-World Workbench (隔离 worktree + artifacts)
-```
 
-## Agent + LLM 组合
+## Agent + LLM Combinations
 
-| 组合 | 内部 Agent | 内部 LLM key | 职责 |
-|------|------------|--------------|------|
-| claude code + deepseek V4 flash | `claude_code` | `deepseek_flash` | 低成本快速任务 |
-| claude code + deepseek V4 pro | `claude_code` | `deepseek_pro` | 默认执行：文档、测试、普通 coding |
-| claude code + Mimo V2.5 | `claude_code` | `mimo_v25` | 多模态/UI/设计稿理解 |
-| claude code + Mimo V2.5 pro | `claude_code` | `mimo_v25_pro` | 多模态到代码、高强度 MiMo coding |
-| opencode + GLM 5.2 | `opencode` | `opencode-go/glm-5.2` | 复杂编码、hard bugfix、大重构 |
-| codex + GPT 5.5 | `codex_review` | `codex_reviewer` | World Review |
+| Combination | Internal agent | Internal LLM key | Role |
+|---|---|---|---|
+| claude code + deepseek V4 flash | `claude_code` | `deepseek_flash` | low-cost quick tasks |
+| claude code + deepseek V4 pro | `claude_code` | `deepseek_pro` | default docs, tests, and ordinary coding |
+| claude code + Mimo V2.5 | `claude_code` | `mimo_v25` | multimodal, UI, and design analysis |
+| claude code + Mimo V2.5 pro | `claude_code` | `mimo_v25_pro` | stronger multimodal-to-code tasks |
+| opencode + GLM 5.2 | `opencode` | `opencode-go/glm-5.2` | complex coding, hard bugfixes, escalation |
+| codex review | `codex_review` | `codex_reviewer` | final World Review |
 
-## 安全边界
+## Safety Boundaries
 
-- ClaudeCodeWorker 不接 GLM
-- GLM-5.2 只走 OpenCodeWorker
-- MiMo V2.5 / V2.5 Pro 只通过 Claude Code，不作为独立 Worker
-- 不自动 merge
-- 不引入 Hermes
+- ClaudeCodeWorker does not receive GLM.
+- GLM-5.2 only runs through OpenCodeWorker.
+- MiMo V2.5 and MiMo V2.5 Pro run through Claude Code, not an independent MiMo worker.
+- World does not auto-merge.
+- World must not read or write secrets.
+- Archived sample reports are evidence, not current roadmap instructions.
+
+## Current Docs
+
+- `../PROJECT_STATUS.md`
+- `../README.md`
+- `README.md`
+- `WORLD_CURRENT_UPGRADE_PLAN_AND_QUALITY_GATE_2026-07-01.md`
+- `WORLD_EXECUTION_PROTOCOL.md`
+- `MODEL_ROUTING.md`
+- `WORLD_TOKEN_LEDGER_V1.md`
+- `WORLD_PROJECT_MEMORY_V1.md`

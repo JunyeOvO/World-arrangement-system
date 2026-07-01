@@ -4,6 +4,9 @@ Date: 2026-07-01
 
 ## Current Source Of Truth
 
+- `../README.md`:
+  user-facing project entrypoint, install notes, CLI quick start, and useful
+  docs list.
 - `WORLD_CURRENT_UPGRADE_PLAN_AND_QUALITY_GATE_2026-07-01.md`:
   current upgrade roadmap, production boundary, and quality gates.
 - `WORLD_EXECUTION_PROTOCOL.md`:
@@ -47,4 +50,3 @@ previous development plans are kept under:
 - `archive/obsolete-2026-07-01/`
 
 Archived files are evidence, not current instructions.
-
