@@ -143,6 +143,22 @@ def test_console_snapshot_does_not_mutate_stale_executing_when_project_completed
     assert all(event["event_type"] != "console.task_auto_dismissed" for event in service.db.list_events(stale_task_id))
 
 
+def test_console_snapshot_does_not_evaluate_or_write_system_alerts(tmp_path: Path, monkeypatch):
+    service = StubService(tmp_path)
+    _create_task(service, status="EXECUTING")
+
+    def fail_if_written(*args, **kwargs):
+        raise AssertionError("snapshot must not write system alerts")
+
+    monkeypatch.setattr(service.db, "upsert_system_alert", fail_if_written)
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    status, _, payload = api.handle_get("/api/console/snapshot")
+
+    assert status == 200
+    assert payload["health"]["open_alerts"] == 1
+
+
 def test_console_snapshot_counts_executing_with_fresh_heartbeat(tmp_path: Path):
     service = StubService(tmp_path)
     task_id = _create_task(service, status="EXECUTING")

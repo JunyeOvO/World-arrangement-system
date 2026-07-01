@@ -48,7 +48,6 @@ class ConsoleQueries:
         self.artifacts = artifacts
 
     def snapshot(self) -> dict[str, Any]:
-        evaluate_alerts(self.db)
         alerts = [alert_view(row) for row in self.db.list_system_alerts(status="open", limit=50)]
         heartbeats = [heartbeat_view(row) for row in self.db.list_worker_heartbeats(limit=50)]
         live_task_ids = _live_task_ids(heartbeats)
