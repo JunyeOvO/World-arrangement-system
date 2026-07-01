@@ -10,9 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .control_files import update_json_file, write_json_file
+
 
 POLL_INTERVAL_SEC = 1.0
-LOCK_TIMEOUT_SEC = 5.0
 
 
 @dataclass
@@ -130,20 +131,22 @@ def run_managed_process(
     else:
         status = "failed"
 
-    payload = _read_json(process_path)
-    payload.update(
-        {
-            "status": status,
-            "returncode": returncode,
-            "finished_at": _utc_now(),
-            "elapsed_sec": round(elapsed, 3),
-            "timed_out": timed_out,
-            "cancelled": cancelled,
-        }
-    )
-    if killed is not None:
-        payload["termination"] = killed
-    _write_json(process_path, payload)
+    def _finish_process(payload: dict[str, Any]) -> dict[str, Any]:
+        payload.update(
+            {
+                "status": status,
+                "returncode": returncode,
+                "finished_at": _utc_now(),
+                "elapsed_sec": round(elapsed, 3),
+                "timed_out": timed_out,
+                "cancelled": cancelled,
+            }
+        )
+        if killed is not None:
+            payload["termination"] = killed
+        return payload
+
+    payload = update_json_file(process_path, _finish_process)
     _write_json(
         heartbeat_path,
         {
@@ -182,20 +185,25 @@ def request_cancel(run_dir: Path, reason: str = "") -> dict[str, Any]:
     _write_json(cancel_path, cancel_payload)
 
     process_path = control_dir / "process.json"
-    process = _read_json(process_path)
-    pid = process.get("pid")
     termination = None
-    if isinstance(pid, int) and process.get("status") in {None, "running"}:
-        termination = terminate_process_tree(pid)
-        process.update(
-            {
-                "status": "cancelled",
-                "cancelled_at": _utc_now(),
-                "cancel_reason": reason,
-                "termination": termination,
-            }
-        )
-        _write_json(process_path, process)
+
+    def _cancel_process(process: dict[str, Any]) -> dict[str, Any]:
+        nonlocal termination
+        pid = process.get("pid")
+        if isinstance(pid, int) and process.get("status") in {None, "running"}:
+            termination = terminate_process_tree(pid)
+            process.update(
+                {
+                    "status": "cancelled",
+                    "cancelled_at": _utc_now(),
+                    "cancel_reason": reason,
+                    "termination": termination,
+                }
+            )
+        return process
+
+    process = update_json_file(process_path, _cancel_process)
+    pid = process.get("pid")
 
     return {
         "run_dir": str(run_dir),
@@ -309,46 +317,7 @@ def _process_payload(
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    last_error: OSError | None = None
-    for attempt in range(5):
-        with _file_lock(path):
-            tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-            try:
-                tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-                tmp.replace(path)
-                return
-            except OSError as exc:
-                last_error = exc
-                try:
-                    tmp.unlink(missing_ok=True)
-                except OSError:
-                    pass
-                time.sleep(0.05 * (attempt + 1))
-    if last_error is not None:
-        raise last_error
-
-
-class _file_lock:
-    def __init__(self, path: Path) -> None:
-        self.lock_path = path.with_name(f"{path.name}.lock")
-
-    def __enter__(self) -> None:
-        deadline = time.monotonic() + LOCK_TIMEOUT_SEC
-        while True:
-            try:
-                self.lock_path.mkdir()
-                return None
-            except FileExistsError:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(f"timed out waiting for lock: {self.lock_path}")
-                time.sleep(0.02)
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        try:
-            self.lock_path.rmdir()
-        except OSError:
-            pass
+    write_json_file(path, data)
 
 
 def _append_stream_sentinel(stdout_path: Path, *, status: str, returncode: int | None, elapsed_sec: float) -> None:

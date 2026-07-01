@@ -4,7 +4,6 @@ import json
 import os
 import subprocess
 import time
-import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -12,12 +11,10 @@ from pathlib import Path
 from typing import Any
 
 from .artifacts import ArtifactStore
+from .control_files import write_json_file
 from .read_only_completion import extract_worker_success_text, read_only_review
 from .task_result_document import build_final_markdown
 from .verifier import VerifyResult, write_verify_result
-
-
-LOCK_TIMEOUT_SEC = 5.0
 
 
 @dataclass
@@ -153,39 +150,6 @@ def read_json_if_exists(path: Path) -> dict[str, Any] | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {"unreadable": str(path)}
-
-
-def write_json_file(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with _file_lock(path):
-        tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-        try:
-            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            tmp.replace(path)
-        finally:
-            tmp.unlink(missing_ok=True)
-
-
-class _file_lock:
-    def __init__(self, path: Path) -> None:
-        self.lock_path = path.with_name(f"{path.name}.lock")
-
-    def __enter__(self) -> None:
-        deadline = time.monotonic() + LOCK_TIMEOUT_SEC
-        while True:
-            try:
-                self.lock_path.mkdir()
-                return None
-            except FileExistsError:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(f"timed out waiting for lock: {self.lock_path}")
-                time.sleep(0.02)
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        try:
-            self.lock_path.rmdir()
-        except OSError:
-            pass
 
 
 def parse_timestamp(value: Any) -> float | None:

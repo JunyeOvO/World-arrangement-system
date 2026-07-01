@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from orchestrator.artifacts import ArtifactStore
+from orchestrator.read_only_completion import extract_worker_success_text
 from orchestrator.stale_worker_reaper import StaleWorkerReaper
 from orchestrator.verifier import VerifyResult
 
@@ -167,3 +168,16 @@ def test_reap_fails_mismatched_process_and_heartbeat_token(tmp_path: Path) -> No
     assert result.status == "FAILED_FINAL"
     assert result.payload["reason"] == "heartbeat token does not match process token"
     assert not (run_dir / "control" / "process.json.lock").exists()
+
+
+def test_stream_close_sentinel_does_not_override_success_text(tmp_path: Path) -> None:
+    stream = tmp_path / "worker.stream.jsonl"
+    stream.write_text(
+        json.dumps({"type": "result", "subtype": "success", "result": "Completed read-only report."})
+        + "\n"
+        + json.dumps({"type": "world.process", "event": "stream_closed", "status": "succeeded"})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert extract_worker_success_text(stream) == "Completed read-only report."
