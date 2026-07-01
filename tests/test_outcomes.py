@@ -55,7 +55,27 @@ def test_partial_artifacts_count_as_successful_read_only_outcome():
     )
 
     assert row["outcome"] == "success"
+    assert row["quality_state"] == "unknown"
     assert row["user_acceptance"] == "accepted"
+
+
+def test_success_without_explicit_verification_is_not_marked_verified():
+    row = derive_task_outcome(
+        {
+            "task_id": "task_unverified",
+            "project_id": "travel_with_me",
+            "status": "COMPLETED_WITH_ARTIFACTS",
+            "user_goal": "只读分析项目质量",
+        },
+        review={"approved": True, "review_mode": "skipped_read_only"},
+        result={"changed_files": []},
+    )
+
+    assert row["outcome"] == "success"
+    assert row["tests_passed"] is None
+    assert row["build_passed"] is None
+    assert row["review_approved"] is True
+    assert row["quality_state"] == "unknown"
 
 
 def test_summarize_outcomes_rates():

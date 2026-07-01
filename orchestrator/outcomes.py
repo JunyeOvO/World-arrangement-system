@@ -135,7 +135,7 @@ def _quality_state(
     review_approved: bool | None,
     degraded: bool,
 ) -> str:
-    if outcome == "success" and tests_passed is not False and build_passed is not False and review_approved is not False:
+    if outcome == "success" and tests_passed is True and build_passed is True and review_approved is True:
         return "verified"
     if degraded:
         return "degraded"
