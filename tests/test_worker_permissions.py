@@ -270,9 +270,14 @@ def test_worker_permission_auditor_records_preflight_and_diff_events(tmp_path):
 
 def test_worker_launch_command_checks_deny_list_only():
     allowed = check_worker_launch_command("opencode", "opencode run -m opencode-go/glm-5.2")
+    wsl_wrapped = check_worker_launch_command(
+        "opencode",
+        "wsl -e sh -lc 'cd . && opencode run --format json --dir . --title t PROMPT'",
+    )
     denied = check_worker_launch_command("opencode", "opencode run --dangerously-skip-permissions")
     chained = check_worker_launch_command("opencode", "opencode run -m opencode-go/glm-5.2; git push")
 
     assert allowed.allowed
+    assert wsl_wrapped.allowed
     assert not denied.allowed
     assert not chained.allowed
