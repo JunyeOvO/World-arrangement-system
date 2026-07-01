@@ -21,8 +21,16 @@ _SECRET_PATTERNS = (
 )
 
 
-def ensure_project_memory(project_id: str, project: dict[str, Any]) -> dict[str, Any]:
+def ensure_project_memory(
+    project_id: str,
+    project: dict[str, Any],
+    *,
+    source_path: str | Path | None = None,
+    source_kind: str = "registered_repo",
+    source_ref: str | None = None,
+) -> dict[str, Any]:
     repo = Path(str(project.get("repo") or "")).expanduser().resolve()
+    source = Path(source_path).expanduser().resolve() if source_path else repo
     store = RuntimeStore(repo, str(project.get("world", {}).get("write_policy") or "zero_write"))
     memory_path = store.project_dir / "memory" / "project_memory.json"
     previous = _read_json(memory_path)
@@ -36,7 +44,7 @@ def ensure_project_memory(project_id: str, project: dict[str, Any]) -> dict[str,
     hits = 0
     misses = 0
     skipped = 0
-    for path in _candidate_files(repo):
+    for path in _candidate_files(source):
         try:
             stat = path.stat()
         except OSError:
@@ -45,7 +53,7 @@ def ensure_project_memory(project_id: str, project: dict[str, Any]) -> dict[str,
         if stat.st_size > MAX_FILE_SIZE:
             skipped += 1
             continue
-        rel = path.relative_to(repo).as_posix()
+        rel = path.relative_to(source).as_posix()
         content_hash = _file_hash(path)
         cached = previous_files.get(rel)
         if cached and cached.get("content_hash") == content_hash and cached.get("summary"):
@@ -68,6 +76,9 @@ def ensure_project_memory(project_id: str, project: dict[str, Any]) -> dict[str,
         "version": MEMORY_VERSION,
         "project_id": project_id,
         "repo_path": str(repo),
+        "source_kind": source_kind,
+        "source_path": str(source),
+        "source_ref": source_ref or "",
         "stack": list(project.get("stack") or []),
         "test_commands": list(project.get("test_commands") or []),
         "build_commands": list(project.get("build_commands") or []),
@@ -96,6 +107,8 @@ def project_memory_prompt(memory: dict[str, Any]) -> str:
         "",
         "Use this cached project memory before reading files. If a referenced file may have changed, prefer checking the file.",
         f"- Project: {memory.get('project_id')}",
+        f"- Source: {memory.get('source_kind') or 'registered_repo'} ({memory.get('source_ref') or 'latest'})",
+        "- Source rule: cached summaries are hints only; inspect the active worktree before relying on any file detail.",
         f"- Stack: {', '.join(memory.get('stack') or []) or 'unknown'}",
         f"- Tests: {json.dumps(memory.get('test_commands') or [], ensure_ascii=False)}",
         f"- Memory hits/misses: {stats.get('hit_count', 0)}/{stats.get('miss_count', 0)}",

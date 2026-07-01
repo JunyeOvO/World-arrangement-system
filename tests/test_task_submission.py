@@ -58,6 +58,7 @@ def test_submission_builder_normalizes_protocol_and_project_fields(tmp_path: Pat
         "read_budget": task["read_budget"],
     }
     assert "project_memory" in task
+    assert task["project_memory"]["memory"]["source_kind"] == "registered_repo"
     assert submission.project_memory == task["project_memory"]
 
 

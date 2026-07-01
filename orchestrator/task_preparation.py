@@ -9,6 +9,7 @@ from typing import Any, Callable
 from .agents_md import inject_agents_md
 from .artifacts import ArtifactStore
 from .multimodal import load_image_inputs
+from .project_memory import ensure_project_memory
 from .workers.mimo_vision_adapter import MimoVisionAdapter
 from .worktree import WorktreeInfo, prepare_worktree
 
@@ -29,12 +30,14 @@ class TaskPreparationService:
         worktree_preparer: Callable[..., WorktreeInfo] = prepare_worktree,
         agents_injector: Callable[[Path], Any] = inject_agents_md,
         vision_adapter_factory: Callable[[], MimoVisionAdapter] = MimoVisionAdapter,
+        project_memory_refresher: Callable[..., dict[str, Any]] = ensure_project_memory,
     ) -> None:
         self.artifacts = artifacts
         self.set_status = set_status
         self.worktree_preparer = worktree_preparer
         self.agents_injector = agents_injector
         self.vision_adapter_factory = vision_adapter_factory
+        self.project_memory_refresher = project_memory_refresher
 
     def prepare(
         self,
@@ -55,6 +58,20 @@ class TaskPreparationService:
         self.artifacts.write_json(task_id, "worktree.json", worktree.__dict__)
         task["worktree_path"] = worktree.path
         self.set_status(task_id, "WORKTREE_READY", "worktree_ready", worktree.__dict__)
+
+        task["project_memory"] = self.project_memory_refresher(
+            str(task.get("project_id") or project.get("project_id") or ""),
+            project,
+            source_path=worktree.path,
+            source_kind="worktree",
+            source_ref=task_id,
+        )
+        self.artifacts.write_json(task_id, "task.json", task)
+        self.set_status(task_id, "WORKTREE_READY", "project_memory_refreshed", {
+            "source_kind": "worktree",
+            "source_ref": task_id,
+            "path": task["project_memory"].get("path"),
+        })
 
         if task.get("image_paths") or task.get("image_base64"):
             observation = self._run_mimo_vision(task, dry_run=dry_run)

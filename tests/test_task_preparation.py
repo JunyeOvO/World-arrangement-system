@@ -43,6 +43,7 @@ def _task(tmp_path: Path) -> dict:
     run_dir.mkdir(parents=True, exist_ok=True)
     return {
         "task_id": "t_prepare",
+        "project_id": "demo",
         "run_dir": str(run_dir),
         "user_goal": "inspect",
     }
@@ -63,8 +64,12 @@ def test_preparation_creates_worktree_and_status(tmp_path: Path):
 
     assert Path(result.worktree.path).exists()
     assert task["worktree_path"] == result.worktree.path
-    assert statuses == [("WORKTREE_READY", "worktree_ready", result.worktree.__dict__)]
+    assert statuses[0] == ("WORKTREE_READY", "worktree_ready", result.worktree.__dict__)
+    assert statuses[1][0:2] == ("WORKTREE_READY", "project_memory_refreshed")
+    assert task["project_memory"]["memory"]["source_kind"] == "worktree"
+    assert task["project_memory"]["memory"]["source_ref"] == "t_prepare"
     assert (tmp_path / "runs" / "t_prepare" / "worktree.json").exists()
+    assert (tmp_path / "runs" / "t_prepare" / "task.json").exists()
 
 
 def test_preparation_adds_vision_observation(tmp_path: Path):
