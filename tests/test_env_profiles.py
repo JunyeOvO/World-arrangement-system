@@ -38,3 +38,9 @@ models:
 
     assert path == str(profile)
     assert env["ANTHROPIC_BASE_URL"] == "https://runtime.example"
+
+
+def test_repo_profiles_are_examples_only():
+    profile_paths = list(Path("profiles").glob("*"))
+    assert profile_paths
+    assert all(path.name.endswith(".env.example") for path in profile_paths if path.is_file())

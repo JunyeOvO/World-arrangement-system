@@ -18,9 +18,10 @@ jobs:
       - name: Install uv
         run: pip install uv
       - name: Sync deps
-        run: uv sync --dev
+        run: uv sync --all-extras --dev
       - name: Lint
         run: uv run ruff check .
+      - name: Schema and config gates
+        run: uv run pytest tests/test_schemas.py tests/test_ci_gates.py tests/test_env_profiles.py
       - name: Test
-        run: uv run pytest -q --maxfail=1 --disable-warnings
-
+        run: uv run pytest -q --disable-warnings

@@ -62,14 +62,14 @@ Windows PowerShell:
 
 ```powershell
 cd C:\Users\fujunye\Documents\World系统
-uv sync --dev
+uv sync --all-extras --dev
 ```
 
 Linux/macOS style shell:
 
 ```bash
 cd /path/to/World-arrangement-system
-uv sync --dev
+uv sync --all-extras --dev
 ```
 
 Create user-level config from examples:

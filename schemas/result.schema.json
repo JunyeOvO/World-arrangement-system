@@ -10,11 +10,13 @@
     "changed_files": { "type": "array", "items": { "type": "string" } },
     "summary": { "type": "string" },
     "tests_run": { "type": "array", "items": { "type": "string" } },
+    "test_suggestions": { "type": "array", "items": { "type": "string" } },
     "tests_passed": { "type": "boolean" },
+    "risks": { "type": "array", "items": { "type": "string" } },
     "logs": { "type": "array", "items": { "type": "string" } },
     "diff_path": { "type": "string" },
     "pr_url": { "type": ["string", "null"] },
-    "needs_user": { "type": "boolean" }
+    "needs_user": { "type": "boolean" },
+    "needs_orchestrator_action": { "type": "boolean" }
   }
 }
-
