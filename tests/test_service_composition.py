@@ -56,3 +56,55 @@ def test_orchestrator_service_exposes_component_facade_attributes(tmp_path, monk
     assert service.components.artifacts is service.artifacts
     assert service.components.task_submission is service.task_submission
     assert service.components.task_execution is service.task_execution
+
+
+def test_orchestrator_submit_task_facade_uses_keyword_forwarding(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_ORCHESTRATOR_HOME", str(tmp_path / "runtime"))
+    service = OrchestratorService()
+    calls = []
+
+    def submit_task(*args, **kwargs):
+        calls.append({"args": args, "kwargs": kwargs})
+        return {"status": "QUEUED", "task_id": "t_keyword"}
+
+    service.task_submission.submit_task = submit_task  # type: ignore[method-assign]
+
+    result = service.submit_task(
+        "demo",
+        "inspect",
+        "low",
+        False,
+        True,
+        True,
+        "opencode",
+        "opencode_go_glm52",
+        "high",
+        ["a.png"],
+        ["data:image/png;base64,abc"],
+        task_mode="read_only",
+        expected_diff=False,
+        verification_policy="changed_files_only",
+        read_budget_profile="quick_triage",
+        read_budget={"max_files": 3},
+    )
+
+    assert result == {"status": "QUEUED", "task_id": "t_keyword"}
+    assert calls[0]["args"] == ()
+    assert calls[0]["kwargs"] == {
+        "project_id": "demo",
+        "user_goal": "inspect",
+        "risk_level": "low",
+        "auto_execute": False,
+        "auto_pr": True,
+        "dry_run": True,
+        "force_worker": "opencode",
+        "force_model": "opencode_go_glm52",
+        "force_variant": "high",
+        "image_paths": ["a.png"],
+        "image_base64": ["data:image/png;base64,abc"],
+        "task_mode": "read_only",
+        "expected_diff": False,
+        "verification_policy": "changed_files_only",
+        "read_budget_profile": "quick_triage",
+        "read_budget": {"max_files": 3},
+    }
