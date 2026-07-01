@@ -82,7 +82,7 @@ class RuntimeStore:
         return self.repo_path / ".world"
 
     def resolve_run_dir(self, run_id: str) -> Path:
-        run_dir = self.project_dir / "runs" / run_id
+        run_dir = self.project_dir / "runs" / _safe_path_segment(run_id, "run_id")
         run_dir.mkdir(parents=True, exist_ok=True)
         return run_dir
 
@@ -109,27 +109,54 @@ class RuntimeStore:
         return self.write_json("project.profile.json", profile)
 
     def write_plan(self, run_id: str, plan: dict[str, Any]) -> Path:
-        return self.write_json(f"runs/{run_id}/plan.json", plan)
+        safe_run_id = _safe_path_segment(run_id, "run_id")
+        return self.write_json(f"runs/{safe_run_id}/plan.json", plan)
 
     def write_dag(self, run_id: str, dag: dict[str, Any]) -> Path:
-        return self.write_json(f"runs/{run_id}/dag.json", dag)
+        safe_run_id = _safe_path_segment(run_id, "run_id")
+        return self.write_json(f"runs/{safe_run_id}/dag.json", dag)
 
     def write_worker_result(self, run_id: str, task_id: str, result: dict[str, Any]) -> Path:
-        return self.write_json(f"runs/{run_id}/worker-results/{task_id}.json", result)
+        safe_run_id = _safe_path_segment(run_id, "run_id")
+        safe_task_id = _safe_path_segment(task_id, "task_id")
+        return self.write_json(
+            f"runs/{safe_run_id}/worker-results/{safe_task_id}.json",
+            result,
+        )
 
     def write_patch(self, run_id: str, task_id: str, patch_text: str) -> Path:
-        path = self.project_dir / "runs" / run_id / "patches" / f"{task_id}.patch"
+        safe_run_id = _safe_path_segment(run_id, "run_id")
+        safe_task_id = _safe_path_segment(task_id, "task_id")
+        path = self.project_dir / "runs" / safe_run_id / "patches" / f"{safe_task_id}.patch"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(patch_text, encoding="utf-8")
         return path
 
     def write_verification(self, run_id: str, report: dict[str, Any]) -> Path:
-        return self.write_json(f"runs/{run_id}/verification/verification_report.json", report)
+        safe_run_id = _safe_path_segment(run_id, "run_id")
+        return self.write_json(f"runs/{safe_run_id}/verification/verification_report.json", report)
 
     def cleanup(self, run_id: str | None = None, mode: Literal["safe", "force"] = "safe") -> None:
-        target = self.project_dir / "runs" / run_id if run_id else self.project_dir
+        project_dir = self.project_dir.resolve()
+        if run_id:
+            target = (project_dir / "runs" / _safe_path_segment(run_id, "run_id")).resolve()
+            target.relative_to(project_dir / "runs")
+        else:
+            target = project_dir
         if not target.exists():
             return
         if mode != "force" and target == self.repo_path:
             raise RuntimeError("refusing to cleanup repository root")
+        target.relative_to(project_dir)
         shutil.rmtree(target)
+
+
+def _safe_path_segment(value: str, field: str) -> str:
+    text = str(value or "")
+    if not text or text in {".", ".."}:
+        raise ValueError(f"invalid {field}: empty or relative segment")
+    if "/" in text or "\\" in text:
+        raise ValueError(f"invalid {field}: path separators are not allowed")
+    if Path(text).name != text:
+        raise ValueError(f"invalid {field}: must be a single path segment")
+    return text

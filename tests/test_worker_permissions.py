@@ -167,6 +167,24 @@ def test_uv_pytest_allowed():
         assert result.allowed, f"{name} should allow uv run pytest"
 
 
+def test_bash_command_rejects_allow_prefix_without_word_boundary():
+    for name in ["claude_code", "opencode"]:
+        result = check_bash_command(name, "pytestmalicious tests")
+        assert not result.allowed, f"{name} should reject pytest prefix smuggling"
+
+
+def test_bash_command_rejects_shell_control_operators():
+    for name in ["claude_code", "opencode"]:
+        result = check_bash_command(name, "pytest tests && git status")
+        assert not result.allowed, f"{name} should reject chained shell commands"
+
+
+def test_bash_command_rejects_denied_command_after_allowed_prefix():
+    for name in ["claude_code", "opencode"]:
+        result = check_bash_command(name, "pytest tests; rm -rf /")
+        assert not result.allowed, f"{name} should reject denied command after separator"
+
+
 def test_npm_install_requires_ask():
     for name in ["claude_code", "opencode"]:
         result = check_bash_command(name, "npm install react")

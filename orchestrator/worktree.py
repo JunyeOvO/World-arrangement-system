@@ -19,8 +19,11 @@ class WorktreeInfo:
 
 
 def prepare_worktree(repo: str, base_branch: str, task_id: str, root: Path, dry_run: bool = False) -> WorktreeInfo:
+    task_id = _safe_path_segment(task_id, "task_id")
     branch = f"ai/{task_id}"
-    target = root / "worktrees" / task_id
+    worktrees_root = (root / "worktrees").resolve()
+    target = (worktrees_root / task_id).resolve()
+    target.relative_to(worktrees_root)
     target.parent.mkdir(parents=True, exist_ok=True)
     if dry_run:
         target.mkdir(parents=True, exist_ok=True)
@@ -46,6 +49,21 @@ def prepare_worktree(repo: str, base_branch: str, task_id: str, root: Path, dry_
 
 def cleanup_worktree(repo: str, path: str, dry_run: bool = False) -> None:
     if dry_run:
-        shutil.rmtree(path, ignore_errors=True)
+        target = Path(path).resolve()
+        repo_path = Path(repo).resolve()
+        if target == repo_path:
+            raise WorktreeError("refusing to cleanup repository root")
+        shutil.rmtree(target, ignore_errors=True)
         return
     subprocess.run(["git", "-C", repo, "worktree", "remove", "--force", path], timeout=60, check=False)
+
+
+def _safe_path_segment(value: str, field: str) -> str:
+    text = str(value or "")
+    if not text or text in {".", ".."}:
+        raise WorktreeError(f"invalid {field}: empty or relative segment")
+    if "/" in text or "\\" in text:
+        raise WorktreeError(f"invalid {field}: path separators are not allowed")
+    if Path(text).name != text:
+        raise WorktreeError(f"invalid {field}: must be a single path segment")
+    return text

@@ -1,6 +1,8 @@
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from orchestrator.ignore_manager import ensure_world_ignored, remove_world_ignore_block
 from orchestrator.runtime_store import RuntimeStore, resolve_project_id
 
@@ -31,6 +33,38 @@ def test_zero_write_uses_world_home_and_does_not_write_repo(tmp_path, monkeypatc
     assert not (repo / ".world").exists()
     status = subprocess.run(["git", "status", "--short"], cwd=repo, text=True, capture_output=True, check=True)
     assert status.stdout.strip() == ""
+
+
+def test_runtime_store_rejects_unsafe_run_id_segments(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    world_home = tmp_path / "world-home"
+    monkeypatch.setenv("WORLD_HOME", str(world_home))
+    store = RuntimeStore(repo, "path_guard")
+
+    with pytest.raises(ValueError):
+        store.resolve_run_dir("../outside")
+    with pytest.raises(ValueError):
+        store.write_worker_result("run-1", "../task", {})
+    with pytest.raises(ValueError):
+        store.write_patch("run/1", "task-1", "diff")
+
+
+def test_runtime_store_cleanup_rejects_path_traversal(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    world_home = tmp_path / "world-home"
+    outside = world_home / "projects" / "outside"
+    outside.mkdir(parents=True)
+    marker = outside / "keep.txt"
+    marker.write_text("keep\n", encoding="utf-8")
+    monkeypatch.setenv("WORLD_HOME", str(world_home))
+    store = RuntimeStore(repo, "cleanup_guard")
+
+    with pytest.raises(ValueError):
+        store.cleanup("../outside", mode="force")
+
+    assert marker.exists()
 
 
 def test_ignore_manager_appends_to_git_info_exclude_idempotently(tmp_path):

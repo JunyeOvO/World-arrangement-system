@@ -10,6 +10,8 @@ OpenCodeWorker has a stronger model but the same danger boundaries.
 from __future__ import annotations
 
 import fnmatch
+import re
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -171,6 +173,9 @@ def check_bash_command(worker_name: str, command: str) -> PermissionCheck:
         if _command_matches(normalized, pattern):
             return PermissionCheck(False, f"bash denied by pattern: {pattern}", False, pattern, "bash", command)
 
+    if _contains_shell_control_operator(normalized):
+        return PermissionCheck(False, "bash command uses shell control operators", False, "", "bash", command)
+
     # Ask
     for pattern in wp.bash_ask:
         if _command_matches(normalized, pattern):
@@ -227,14 +232,34 @@ def _path_matches(file_path: str, pattern: str) -> bool:
 
 def _command_matches(command: str, pattern: str) -> bool:
     """Check if a bash command matches a pattern (supports * wildcard)."""
-    import re
-
     if pattern.endswith("*"):
-        return command.startswith(pattern[:-1])
+        return _matches_prefix(command, pattern[:-1])
     if "*" in pattern:
         regex = re.escape(pattern).replace(r"\*", ".*")
         return bool(re.search(regex, command))
-    return command.startswith(pattern) or pattern in command
+    return _matches_prefix(command, pattern) or pattern in command
+
+
+def _matches_prefix(command: str, prefix: str) -> bool:
+    prefix = prefix.strip()
+    if not prefix:
+        return False
+    if not command.startswith(prefix):
+        return False
+    if len(command) == len(prefix):
+        return True
+    return command[len(prefix)].isspace()
+
+
+def _contains_shell_control_operator(command: str) -> bool:
+    try:
+        tokens = shlex.split(command, posix=False)
+    except ValueError:
+        return True
+    control_tokens = {";", "&&", "||", "|", ">", ">>", "<", "<<", "&"}
+    if any(token in control_tokens for token in tokens):
+        return True
+    return bool(re.search(r"(?<!\\)(;|&&|\|\||\||>>?|<<?|`|\$\()", command))
 
 
 def _default_permissions(worker_name: str) -> WorkerPermissions:
