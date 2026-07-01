@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .artifacts import ArtifactStore
-from .control_files import write_json_file
+from .control_files import read_json_file, write_json_file
 from .read_only_completion import extract_worker_success_text, read_only_review
 from .task_result_document import build_final_markdown
 from .verifier import VerifyResult, write_verify_result
@@ -147,8 +147,8 @@ def read_json_if_exists(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+        return read_json_file(path)
+    except (OSError, TimeoutError):
         return {"unreadable": str(path)}
 
 

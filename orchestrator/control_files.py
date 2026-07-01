@@ -19,6 +19,13 @@ def write_json_file(path: Path, data: dict[str, Any]) -> None:
         _atomic_write_json(path, data)
 
 
+def read_json_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    with FileLock(path):
+        return _read_json_unlocked(path)
+
+
 def update_json_file(path: Path, updater: Callable[[dict[str, Any]], dict[str, Any]]) -> dict[str, Any]:
     path.parent.mkdir(parents=True, exist_ok=True)
     with FileLock(path):

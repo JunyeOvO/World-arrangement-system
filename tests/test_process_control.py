@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 import sys
 
-from orchestrator.process_control import redact_command, request_cancel, run_managed_process
+from orchestrator.process_control import (
+    _merge_finished_process_payload,
+    redact_command,
+    request_cancel,
+    run_managed_process,
+)
 
 
 def test_run_managed_process_times_out_and_writes_control_files(tmp_path):
@@ -70,3 +75,20 @@ def test_redact_command_omits_wsl_shell_and_secrets():
         "[shell-command-omitted]",
     ]
     assert "[redacted]" in redact_command(["tool", "--token", "sk-secret"])
+
+
+def test_finished_process_merge_preserves_concurrent_cancelled_state():
+    payload = _merge_finished_process_payload(
+        {"pid": 123, "status": "cancelled", "cancel_reason": "user stop"},
+        status="succeeded",
+        returncode=0,
+        elapsed_sec=1.2,
+        timed_out=False,
+        cancelled=False,
+        killed=None,
+    )
+
+    assert payload["status"] == "cancelled"
+    assert payload["cancelled"] is True
+    assert payload["timed_out"] is False
+    assert payload["cancel_reason"] == "user stop"

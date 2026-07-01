@@ -132,21 +132,20 @@ def run_managed_process(
         status = "failed"
 
     def _finish_process(payload: dict[str, Any]) -> dict[str, Any]:
-        payload.update(
-            {
-                "status": status,
-                "returncode": returncode,
-                "finished_at": _utc_now(),
-                "elapsed_sec": round(elapsed, 3),
-                "timed_out": timed_out,
-                "cancelled": cancelled,
-            }
+        return _merge_finished_process_payload(
+            payload,
+            status=status,
+            returncode=returncode,
+            elapsed_sec=round(elapsed, 3),
+            timed_out=timed_out,
+            cancelled=cancelled,
+            killed=killed,
         )
-        if killed is not None:
-            payload["termination"] = killed
-        return payload
 
     payload = update_json_file(process_path, _finish_process)
+    status = str(payload.get("status") or status)
+    timed_out = bool(payload.get("timed_out", timed_out))
+    cancelled = bool(payload.get("cancelled", cancelled))
     _write_json(
         heartbeat_path,
         {
@@ -314,6 +313,38 @@ def _process_payload(
         "stdout_path": str(stdout_path),
         "stderr_path": str(stderr_path),
     }
+
+
+def _merge_finished_process_payload(
+    payload: dict[str, Any],
+    *,
+    status: str,
+    returncode: int | None,
+    elapsed_sec: float,
+    timed_out: bool,
+    cancelled: bool,
+    killed: dict[str, Any] | None,
+) -> dict[str, Any]:
+    final_status = status
+    final_timed_out = timed_out
+    final_cancelled = cancelled
+    if payload.get("status") == "cancelled":
+        final_status = "cancelled"
+        final_cancelled = True
+        final_timed_out = False
+    payload.update(
+        {
+            "status": final_status,
+            "returncode": returncode,
+            "finished_at": _utc_now(),
+            "elapsed_sec": elapsed_sec,
+            "timed_out": final_timed_out,
+            "cancelled": final_cancelled,
+        }
+    )
+    if killed is not None:
+        payload["termination"] = killed
+    return payload
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
