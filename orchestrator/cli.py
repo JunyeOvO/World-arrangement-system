@@ -56,6 +56,27 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
     )
     submit.add_argument("--read-budget", action="append", default=[], help="Read budget entry as key=value, e.g. max_files=8")
+    current_submit = sub.add_parser("submit-current-project-task")
+    current_submit.add_argument("--repo-path", default=".")
+    current_submit.add_argument("--goal", required=True)
+    current_submit.add_argument("--risk-level", default="medium")
+    current_submit.add_argument("--auto-pr", action="store_true")
+    current_submit.add_argument("--no-execute", action="store_true")
+    current_submit.add_argument("--dry-run", action="store_true")
+    current_submit.add_argument("--worker", default=None, help="Force a worker for this task, e.g. opencode")
+    current_submit.add_argument("--model", default=None, help="Force a model for this task, e.g. opencode-go/glm-5.2")
+    current_submit.add_argument("--variant", default=None, help="Force a capability/CLI variant for this task, e.g. high or max")
+    current_submit.add_argument("--image-path", action="append", default=[], help="Local PNG/JPEG path for MiMo vision observation")
+    current_submit.add_argument("--image-base64", action="append", default=[], help="Inline base64 PNG/JPEG or data URL for MiMo vision observation")
+    current_submit.add_argument("--task-mode", choices=["read_only", "patch", "test", "docs", "audit"], default=None)
+    current_submit.add_argument("--expected-diff", choices=["true", "false"], default=None)
+    current_submit.add_argument("--verification-policy", choices=["none", "changed_files_only", "unit", "full"], default=None)
+    current_submit.add_argument(
+        "--read-budget-profile",
+        choices=["quick_triage", "code_contract_audit", "next_task_planning", "docs_review"],
+        default=None,
+    )
+    current_submit.add_argument("--read-budget", action="append", default=[], help="Read budget entry as key=value, e.g. max_files=8")
     status = sub.add_parser("get-task-status")
     status.add_argument("--task-id", required=True)
     result = sub.add_parser("read-task-result")
@@ -111,6 +132,27 @@ def main(argv: list[str] | None = None) -> int:
                 args.variant,
                 args.image_path,
                 args.image_base64,
+                task_mode=args.task_mode,
+                expected_diff=_parse_optional_bool(args.expected_diff),
+                verification_policy=args.verification_policy,
+                read_budget_profile=args.read_budget_profile,
+                read_budget=_parse_read_budget(args.read_budget),
+            )
+        )
+    if args.cmd == "submit-current-project-task":
+        return _print(
+            service.submit_current_project_task(
+                args.goal,
+                repo_path=args.repo_path,
+                risk_level=args.risk_level,
+                auto_execute=not args.no_execute,
+                auto_pr=args.auto_pr,
+                dry_run=args.dry_run,
+                force_worker=args.worker,
+                force_model=args.model,
+                force_variant=args.variant,
+                image_paths=args.image_path,
+                image_base64=args.image_base64,
                 task_mode=args.task_mode,
                 expected_diff=_parse_optional_bool(args.expected_diff),
                 verification_policy=args.verification_policy,

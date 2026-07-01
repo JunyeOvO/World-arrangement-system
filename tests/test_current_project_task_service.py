@@ -38,6 +38,9 @@ def test_submit_current_project_task_delegates_to_submit_task_with_protocol_fiel
         auto_execute=False,
         auto_pr=True,
         dry_run=True,
+        force_worker="opencode",
+        force_model="opencode_go_glm52",
+        force_variant="high",
         image_paths=["a.png"],
         image_base64=["data:image/png;base64,abc"],
         task_mode="read_only",
@@ -50,6 +53,9 @@ def test_submit_current_project_task_delegates_to_submit_task_with_protocol_fiel
     assert result == {"status": "QUEUED", "task_id": "t_1"}
     assert calls[0]["args"] == ("project_1", "inspect repo", "low", False, True, True)
     assert calls[0]["kwargs"] == {
+        "force_worker": "opencode",
+        "force_model": "opencode_go_glm52",
+        "force_variant": "high",
         "image_paths": ["a.png"],
         "image_base64": ["data:image/png;base64,abc"],
         "task_mode": "read_only",
