@@ -98,6 +98,27 @@ def test_ensure_column_swallows_duplicate_column_race(tmp_path):
     assert calls == ["PRAGMA table_info(sample)", "ALTER TABLE sample ADD COLUMN value TEXT"]
 
 
+def test_ensure_column_reraises_non_duplicate_operational_error(tmp_path):
+    db = TaskDB(tmp_path / "state.db")
+
+    class FakeCursor:
+        def fetchall(self):
+            return []
+
+    class FakeConnection:
+        def execute(self, sql):
+            if sql.startswith("PRAGMA table_info"):
+                return FakeCursor()
+            raise sqlite3.OperationalError("no such table: sample")
+
+    try:
+        db._ensure_column(FakeConnection(), "sample", "value", "TEXT")  # type: ignore[arg-type]
+    except sqlite3.OperationalError as exc:
+        assert "no such table" in str(exc)
+    else:
+        raise AssertionError("expected non-duplicate OperationalError to propagate")
+
+
 def test_init_dedupes_learned_patterns_before_unique_index(tmp_path):
     path = tmp_path / "state.db"
     con = sqlite3.connect(path)
