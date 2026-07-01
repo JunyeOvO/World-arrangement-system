@@ -66,6 +66,7 @@ def test_task_token_ledger_combines_codex_worker_memory_and_cost(tmp_path):
 
     ledger = build_task_token_ledger(db, "task_1")
 
+    assert ledger["read_consistency"] == "single_sqlite_transaction"
     assert ledger["codex"]["total_tokens"] == 4000
     assert ledger["codex"]["actual_total_tokens"] == 2500
     assert ledger["worker"]["total_tokens"] == 1_600_000
@@ -95,6 +96,7 @@ def test_write_task_token_ledger(tmp_path):
     output = write_task_token_ledger(db, "task_2", tmp_path / "run" / "token_ledger.json")
 
     assert output.exists()
+    assert not (output.parent / "token_ledger.json.lock").exists()
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["task_id"] == "task_2"
     assert payload["codex"]["event_count"] == 0
@@ -118,3 +120,30 @@ def test_task_token_ledger_without_baseline_marks_counterfactual_unmeasured(tmp_
 
     assert ledger["baselines"] == []
     assert ledger["counterfactual"]["status"] == "not_measured"
+
+
+def test_task_token_ledger_uses_single_snapshot_reader(tmp_path, monkeypatch):
+    db = TaskDB(tmp_path / "world.db")
+    db.create_task({
+        "task_id": "task_4",
+        "project_id": "project_1",
+        "repo_path": str(tmp_path),
+        "user_goal": "inspect project",
+        "status": "QUEUED",
+        "created_at": "2026-06-29T01:00:00Z",
+        "updated_at": "2026-06-29T01:01:00Z",
+        "run_dir": str(tmp_path / "run"),
+    })
+
+    monkeypatch.setattr(db, "list_task_metrics", lambda task_id: (_ for _ in ()).throw(AssertionError("no public list")))
+    monkeypatch.setattr(
+        db,
+        "list_codex_usage_events",
+        lambda task_id=None, limit=500: (_ for _ in ()).throw(AssertionError("no public list")),
+    )
+    monkeypatch.setattr(db, "list_task_baselines", lambda task_id, limit=50: (_ for _ in ()).throw(AssertionError("no public list")))
+
+    ledger = build_task_token_ledger(db, "task_4")
+
+    assert ledger["task_id"] == "task_4"
+    assert ledger["read_consistency"] == "single_sqlite_transaction"

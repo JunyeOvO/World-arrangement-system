@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 from typing import Any
 
+from .control_files import write_json_file
 from .db import TaskDB
 from .pricing import calculate_token_cost_usd, has_price
 
@@ -13,10 +13,11 @@ LEDGER_VERSION = 1
 
 
 def build_task_token_ledger(db: TaskDB, task_id: str) -> dict[str, Any]:
-    task = db.get_task(task_id) or {"task_id": task_id}
-    metrics = db.list_task_metrics(task_id)
-    codex_events = list(reversed(db.list_codex_usage_events(task_id=task_id, limit=2000)))
-    baselines = db.list_task_baselines(task_id)
+    snapshot = _task_ledger_snapshot(db, task_id)
+    task = snapshot["task"] or {"task_id": task_id}
+    metrics = snapshot["metrics"]
+    codex_events = snapshot["codex_events"]
+    baselines = snapshot["baselines"]
 
     codex = _codex_section(codex_events)
     worker = _worker_section(metrics)
@@ -30,6 +31,7 @@ def build_task_token_ledger(db: TaskDB, task_id: str) -> dict[str, Any]:
         "project_id": task.get("project_id"),
         "task_status": task.get("status"),
         "generated_at": _now(),
+        "read_consistency": "single_sqlite_transaction",
         "codex": codex,
         "worker": worker,
         "combined": {
@@ -62,9 +64,43 @@ def build_task_token_ledger(db: TaskDB, task_id: str) -> dict[str, Any]:
 
 def write_task_token_ledger(db: TaskDB, task_id: str, output: Path) -> Path:
     ledger = build_task_token_ledger(db, task_id)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(ledger, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json_file(output, ledger)
     return output
+
+
+def _task_ledger_snapshot(db: TaskDB, task_id: str) -> dict[str, Any]:
+    db.init()
+    with db.connect() as con:
+        con.execute("BEGIN")
+        task_row = con.execute("SELECT * FROM tasks WHERE task_id=?", [task_id]).fetchone()
+        metrics_rows = con.execute(
+            "SELECT * FROM task_metrics WHERE task_id=? ORDER BY attempt_no ASC",
+            [task_id],
+        ).fetchall()
+        codex_rows = con.execute(
+            """
+            SELECT * FROM codex_usage_events
+            WHERE task_id=?
+            ORDER BY created_at ASC, id ASC
+            LIMIT 2000
+            """,
+            [task_id],
+        ).fetchall()
+        baseline_rows = con.execute(
+            """
+            SELECT * FROM task_baselines
+            WHERE task_id=?
+            ORDER BY actual_codex_used DESC, created_at DESC, id DESC
+            LIMIT 50
+            """,
+            [task_id],
+        ).fetchall()
+    return {
+        "task": dict(task_row) if task_row else None,
+        "metrics": [dict(row) for row in metrics_rows],
+        "codex_events": [_decode_codex_event(dict(row)) for row in codex_rows],
+        "baselines": [_decode_baseline(dict(row)) for row in baseline_rows],
+    }
 
 
 def _codex_section(events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -192,6 +228,30 @@ def _counterfactual_section(codex: dict[str, Any], baselines: list[dict[str, Any
             else "Replay estimate is useful for trend analysis but is not measured Codex quota usage."
         ),
     }
+
+
+def _decode_codex_event(row: dict[str, Any]) -> dict[str, Any]:
+    raw_metadata = row.pop("metadata_json", None)
+    row["metadata"] = _decode_json_object(raw_metadata)
+    row["actual_codex_used"] = bool(row.get("actual_codex_used"))
+    return row
+
+
+def _decode_baseline(row: dict[str, Any]) -> dict[str, Any]:
+    raw_metadata = row.pop("metadata_json", None)
+    row["metadata"] = _decode_json_object(raw_metadata)
+    row["actual_codex_used"] = bool(row.get("actual_codex_used"))
+    return row
+
+
+def _decode_json_object(value: Any) -> dict[str, Any]:
+    import json
+
+    try:
+        decoded = json.loads(value or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
 
 
 def _int(value: Any) -> int:
