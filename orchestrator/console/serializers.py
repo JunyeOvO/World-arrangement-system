@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .display_names import display_agent_name, display_model_name
-from .pricing import calculate_token_cost_usd
+from .pricing import calculate_token_cost_usd, has_price
 from .redaction import redact
 
 
@@ -70,6 +70,12 @@ def metric_view(row: dict[str, Any]) -> dict[str, Any]:
     value = redact(dict(row))
     value["adapter_reported_cost_usd"] = row.get("total_cost_usd")
     value["total_cost_usd"] = calculate_token_cost_usd(row)
+    value["priced"] = has_price(row.get("model"))
+    value["pricing_note"] = (
+        "configured_model_price"
+        if value["priced"]
+        else "missing_model_price; cost_usd excludes this row"
+    )
     value["worker"] = display_agent_name(row.get("worker"))
     value["model"] = display_model_name(row.get("model"))
     for key in ("input_tokens", "output_tokens", "cache_read_input_tokens"):

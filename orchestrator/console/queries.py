@@ -200,6 +200,8 @@ class ConsoleQueries:
     def metrics_summary(self) -> dict[str, Any]:
         rows = self._metric_rows()
         total = sum(calculate_token_cost_usd(row) for row in rows)
+        priced_attempts = sum(1 for row in rows if has_price(row.get("model")))
+        unpriced_attempts = len(rows) - priced_attempts
         durations = sorted(int(row.get("duration_ms") or 0) for row in rows)
         p95 = durations[int(len(durations) * 0.95) - 1] if durations else 0
         failures: dict[str, int] = {}
@@ -208,6 +210,10 @@ class ConsoleQueries:
             failures[str(reason)] = failures.get(str(reason), 0) + 1
         return {
             "attempts": len(rows),
+            "priced_attempts": priced_attempts,
+            "unpriced_attempts": unpriced_attempts,
+            "pricing_complete": unpriced_attempts == 0,
+            "cost_note": _pricing_note(unpriced_attempts),
             "total_cost_usd": round(total, 6),
             "p95_duration_ms": p95,
             "failure_reasons": failures,
@@ -223,10 +229,16 @@ class ConsoleQueries:
                 "worker": worker,
                 "model": model,
                 "attempts": 0,
+                "priced_attempts": 0,
+                "unpriced_attempts": 0,
                 "total_cost_usd": 0.0,
                 "successes": 0,
             })
             item["attempts"] += 1
+            if has_price(row.get("model")):
+                item["priced_attempts"] += 1
+            else:
+                item["unpriced_attempts"] += 1
             item["total_cost_usd"] += calculate_token_cost_usd(row)
             if str(row.get("status") or "") in {"success", "COMPLETED_WITH_PATCH", "PR_CREATED", "DONE"}:
                 item["successes"] += 1
@@ -238,6 +250,9 @@ class ConsoleQueries:
                 "worker": item["worker"],
                 "model": item["model"],
                 "attempts": attempts,
+                "priced_attempts": int(item["priced_attempts"]),
+                "unpriced_attempts": int(item["unpriced_attempts"]),
+                "pricing_complete": int(item["unpriced_attempts"]) == 0,
                 "avg_cost_usd": round(avg_cost, 6),
                 "success_rate": (float(item["successes"]) / attempts) if attempts else 0.0,
                 "total_cost_usd": round(float(item["total_cost_usd"]), 6),
@@ -295,6 +310,7 @@ class ConsoleQueries:
         total_tokens = total_input + total_output + total_cache
         missing_token_rows = sum(1 for row in rows if _tokens_missing(row))
         priced_rows = [row for row in rows if has_price(row.get("model"))]
+        unpriced_attempts = len(rows) - len(priced_rows)
         actual_cost = sum(calculate_token_cost_usd(row) for row in rows)
         baseline_cost = sum(calculate_token_cost_usd(row, reference_model) for row in rows)
         savings = baseline_cost - actual_cost
@@ -308,6 +324,8 @@ class ConsoleQueries:
                 "worker": worker,
                 "model": model,
                 "attempts": 0,
+                "priced_attempts": 0,
+                "unpriced_attempts": 0,
                 "input_tokens": 0,
                 "output_tokens": 0,
                 "cache_read_input_tokens": 0,
@@ -315,6 +333,10 @@ class ConsoleQueries:
                 "reference_cost_usd": 0.0,
             })
             item["attempts"] += 1
+            if has_price(row.get("model")):
+                item["priced_attempts"] += 1
+            else:
+                item["unpriced_attempts"] += 1
             item["input_tokens"] += _metric_int(row.get("input_tokens"))
             item["output_tokens"] += _metric_int(row.get("output_tokens"))
             item["cache_read_input_tokens"] += _metric_int(row.get("cache_read_input_tokens"))
@@ -333,6 +355,9 @@ class ConsoleQueries:
                 "worker": item["worker"],
                 "model": item["model"],
                 "attempts": item["attempts"],
+                "priced_attempts": item["priced_attempts"],
+                "unpriced_attempts": item["unpriced_attempts"],
+                "pricing_complete": item["unpriced_attempts"] == 0,
                 "input_tokens": item["input_tokens"],
                 "output_tokens": item["output_tokens"],
                 "cache_read_input_tokens": item["cache_read_input_tokens"],
@@ -345,6 +370,9 @@ class ConsoleQueries:
         return {
             "attempts": len(rows),
             "priced_attempts": len(priced_rows),
+            "unpriced_attempts": unpriced_attempts,
+            "pricing_complete": unpriced_attempts == 0,
+            "cost_note": _pricing_note(unpriced_attempts),
             "missing_token_rows": missing_token_rows,
             "reference_model": display_model_name(reference_model),
             "actual_cost_usd": round(actual_cost, 6),
@@ -541,6 +569,15 @@ def _tokens_missing(row: dict[str, Any]) -> bool:
         and row.get("output_tokens") is None
         and row.get("cache_read_input_tokens") is None
     )
+
+
+def _pricing_note(unpriced_attempts: int) -> str:
+    if unpriced_attempts:
+        return (
+            f"{unpriced_attempts} attempt(s) use models without configured prices; "
+            "reported USD cost excludes those rows and must not be treated as complete."
+        )
+    return "All worker attempts use configured model prices."
 
 
 def _quality_row(row: dict[str, Any]) -> dict[str, Any]:

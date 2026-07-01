@@ -512,10 +512,55 @@ def test_metrics_summary_and_models_compute_cost_from_tokens(tmp_path: Path):
     _, _, models = api.handle_get("/api/metrics/models")
 
     assert summary["total_cost_usd"] == 1.308625
+    assert summary["priced_attempts"] == 1
+    assert summary["unpriced_attempts"] == 0
+    assert summary["pricing_complete"] is True
     assert models["models"][0]["worker"] == "Claudecode"
     assert models["models"][0]["model"] == "Deepseek-V4-pro"
+    assert models["models"][0]["priced_attempts"] == 1
+    assert models["models"][0]["unpriced_attempts"] == 0
+    assert models["models"][0]["pricing_complete"] is True
     assert models["models"][0]["avg_cost_usd"] == 1.308625
     assert models["models"][0]["total_cost_usd"] == 1.308625
+
+
+def test_metrics_reports_unpriced_models_instead_of_silent_zero_cost(tmp_path: Path):
+    service = StubService(tmp_path)
+    _create_task(service, status="COMPLETED_WITH_PATCH", task_id="task_unknown_price")
+    service.db.upsert_task_metrics({
+        "task_id": "task_unknown_price",
+        "attempt_no": 1,
+        "worker": "claude_code",
+        "model": "future_model_x",
+        "status": "success",
+        "failure_reason": "",
+        "total_cost_usd": 99.99,
+        "duration_ms": 1000,
+        "duration_api_ms": 900,
+        "num_turns": 1,
+        "input_tokens": 1_000_000,
+        "output_tokens": 1_000_000,
+        "cache_read_input_tokens": 0,
+        "changed_files_count": 1,
+        "build_passed": True,
+        "review_approved": True,
+        "created_at": "2026-06-28T13:12:00Z",
+    })
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    _, _, summary = api.handle_get("/api/metrics/summary")
+    _, _, models = api.handle_get("/api/metrics/models")
+    _, _, detail = api.handle_get("/api/tasks/task_unknown_price")
+
+    assert summary["total_cost_usd"] == 0.0
+    assert summary["priced_attempts"] == 0
+    assert summary["unpriced_attempts"] == 1
+    assert summary["pricing_complete"] is False
+    assert "without configured prices" in summary["cost_note"]
+    assert models["models"][0]["unpriced_attempts"] == 1
+    assert models["models"][0]["pricing_complete"] is False
+    assert detail["metrics"][0]["priced"] is False
+    assert "missing_model_price" in detail["metrics"][0]["pricing_note"]
 
 
 def test_model_metrics_merges_display_name_aliases(tmp_path: Path):
@@ -553,6 +598,9 @@ def test_model_metrics_merges_display_name_aliases(tmp_path: Path):
         "worker": "Opencode",
         "model": "GLM-5.2",
         "attempts": 2,
+        "priced_attempts": 2,
+        "unpriced_attempts": 0,
+        "pricing_complete": True,
         "avg_cost_usd": 0.00197,
         "success_rate": 1.0,
         "total_cost_usd": 0.00394,
@@ -661,6 +709,8 @@ def test_metrics_efficiency_reports_real_token_cost_and_reference_baseline(tmp_p
     assert payload["savings_pct"] == 91.4
     assert payload["total_tokens"] == 1_600_000
     assert payload["cache_read_ratio"] == 33.33
+    assert payload["unpriced_attempts"] == 0
+    assert payload["pricing_complete"] is True
     assert payload["missing_token_rows"] == 1
     assert payload["codex_token_savings_measured"] is False
     assert payload["codex_token_savings_note"] != "[REDACTED]"
@@ -681,6 +731,7 @@ def test_metrics_efficiency_reports_real_token_cost_and_reference_baseline(tmp_p
     assert payload["baseline"]["claim_strength"] == "actual_codex_only_baseline"
     assert payload["baseline"]["rows"][0]["status"] == "measured"
     assert payload["by_model"][0]["model"] == "Deepseek-V4-flash"
+    assert payload["by_model"][0]["pricing_complete"] is True
     assert payload["by_model"][0]["savings_usd"] == 1.8006
 
 

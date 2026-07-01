@@ -157,6 +157,7 @@ def _worker_section(metrics: list[dict[str, Any]]) -> dict[str, Any]:
     calculated_cost = sum(calculate_token_cost_usd(row) for row in metrics)
     adapter_cost = sum(_float(row.get("total_cost_usd")) for row in metrics if row.get("total_cost_usd") is not None)
     priced_attempts = sum(1 for row in metrics if has_price(row.get("model")))
+    unpriced_attempts = len(metrics) - priced_attempts
     models: dict[tuple[str, str], dict[str, Any]] = {}
     for row in metrics:
         key = (str(row.get("worker") or ""), str(row.get("model") or ""))
@@ -164,12 +165,18 @@ def _worker_section(metrics: list[dict[str, Any]]) -> dict[str, Any]:
             "worker": key[0],
             "model": key[1],
             "attempts": 0,
+            "priced_attempts": 0,
+            "unpriced_attempts": 0,
             "input_tokens": 0,
             "output_tokens": 0,
             "cache_read_input_tokens": 0,
             "calculated_cost_usd": 0.0,
         })
         model["attempts"] += 1
+        if has_price(row.get("model")):
+            model["priced_attempts"] += 1
+        else:
+            model["unpriced_attempts"] += 1
         model["input_tokens"] += _int(row.get("input_tokens"))
         model["output_tokens"] += _int(row.get("output_tokens"))
         model["cache_read_input_tokens"] += _int(row.get("cache_read_input_tokens"))
@@ -180,11 +187,19 @@ def _worker_section(metrics: list[dict[str, Any]]) -> dict[str, Any]:
             item["input_tokens"] + item["output_tokens"] + item["cache_read_input_tokens"]
         )
         item["calculated_cost_usd"] = round(float(item["calculated_cost_usd"]), 6)
+        item["pricing_complete"] = int(item["unpriced_attempts"]) == 0
         model_rows.append(item)
     model_rows.sort(key=lambda row: (-int(row["attempts"]), str(row["model"])))
     return {
         "attempts": len(metrics),
         "priced_attempts": priced_attempts,
+        "unpriced_attempts": unpriced_attempts,
+        "pricing_complete": unpriced_attempts == 0,
+        "cost_note": (
+            "All worker attempts use configured model prices."
+            if unpriced_attempts == 0
+            else f"{unpriced_attempts} worker attempt(s) have no configured model price; calculated_cost_usd excludes them."
+        ),
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "cache_read_input_tokens": cache_tokens,

@@ -71,6 +71,9 @@ def test_task_token_ledger_combines_codex_worker_memory_and_cost(tmp_path):
     assert ledger["codex"]["actual_total_tokens"] == 2500
     assert ledger["worker"]["total_tokens"] == 1_600_000
     assert ledger["worker"]["calculated_cost_usd"] == 1.97
+    assert ledger["worker"]["priced_attempts"] == 1
+    assert ledger["worker"]["unpriced_attempts"] == 0
+    assert ledger["worker"]["pricing_complete"] is True
     assert ledger["worker"]["adapter_reported_cost_usd"] == 0.5
     assert ledger["worker"]["memory_hit_count"] == 7
     assert ledger["worker"]["memory_miss_count"] == 2
@@ -120,6 +123,48 @@ def test_task_token_ledger_without_baseline_marks_counterfactual_unmeasured(tmp_
 
     assert ledger["baselines"] == []
     assert ledger["counterfactual"]["status"] == "not_measured"
+
+
+def test_task_token_ledger_marks_unpriced_worker_models(tmp_path):
+    db = TaskDB(tmp_path / "world.db")
+    db.create_task({
+        "task_id": "task_unpriced",
+        "project_id": "project_1",
+        "repo_path": str(tmp_path),
+        "user_goal": "inspect project",
+        "status": "COMPLETED_NO_CHANGES",
+        "created_at": "2026-06-29T01:00:00Z",
+        "updated_at": "2026-06-29T01:01:00Z",
+        "run_dir": str(tmp_path / "run"),
+    })
+    db.upsert_task_metrics({
+        "task_id": "task_unpriced",
+        "attempt_no": 1,
+        "worker": "claude_code",
+        "model": "future_model_x",
+        "status": "success",
+        "failure_reason": "",
+        "total_cost_usd": 0.0,
+        "duration_ms": 1000,
+        "duration_api_ms": 900,
+        "num_turns": 2,
+        "input_tokens": 1_000_000,
+        "output_tokens": 100_000,
+        "cache_read_input_tokens": 0,
+        "changed_files_count": 0,
+        "build_passed": True,
+        "review_approved": True,
+        "created_at": "2026-06-29T01:01:00Z",
+    })
+
+    ledger = build_task_token_ledger(db, "task_unpriced")
+
+    assert ledger["worker"]["calculated_cost_usd"] == 0.0
+    assert ledger["worker"]["priced_attempts"] == 0
+    assert ledger["worker"]["unpriced_attempts"] == 1
+    assert ledger["worker"]["pricing_complete"] is False
+    assert "no configured model price" in ledger["worker"]["cost_note"]
+    assert ledger["worker"]["models"][0]["pricing_complete"] is False
 
 
 def test_task_token_ledger_uses_single_snapshot_reader(tmp_path, monkeypatch):
