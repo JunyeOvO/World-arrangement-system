@@ -252,14 +252,15 @@ This prevents stale `EXECUTING` rows from appearing as truly running when the wo
 
 ## Useful Docs
 
-- `docs/WORLD_HIGHEST_STANDARD_IMPLEMENTATION_PLAN_2026-06-28.md`
-- `docs/WORLD_CAPABILITY_ASSESSMENT_AND_UPGRADE_PLAN_2026-06-29.md`
-- `docs/WORLD_STATUS_CLASSIFICATION_FIX_PLAN.md` if present locally
+- `docs/WORLD_CURRENT_UPGRADE_PLAN_AND_QUALITY_GATE_2026-07-01.md`
+- `docs/WORLD_EXECUTION_PROTOCOL.md`
 - `docs/WORLD_SYSTEM_OVERVIEW.md`
 - `docs/CODEX_ENTRY.md`
 - `docs/LIGHTWEIGHT_DEPLOYMENT.md`
 - `docs/MODEL_ROUTING.md`
 - `docs/WORKER_CONTRACT.md`
+- Historical upgrade plans, samples, scans, and old gate reports are archived in
+  `docs/archive/obsolete-2026-07-01/`.
 
 ## Current Boundary
 
