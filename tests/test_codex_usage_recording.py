@@ -56,13 +56,44 @@ def test_record_planning_dispatch_writes_usage_event_artifact_and_audit(tmp_path
     rows = db.list_codex_usage_events(task_id="t_codex")
     audit_events = db.list_events("t_codex")
     artifact = json.loads((artifacts.run_dir("t_codex") / "codex_usage" / "planning_dispatch.json").read_text(encoding="utf-8"))
+    history = (artifacts.run_dir("t_codex") / "codex_usage" / "events.jsonl").read_text(encoding="utf-8").splitlines()
 
     assert len(rows) == 1
     assert rows[0]["phase"] == "planning_dispatch"
     assert rows[0]["metadata"]["scope"] == "codex_main_thread_task_spec_and_dispatch"
     assert artifact["total_tokens"] == rows[0]["total_tokens"]
+    assert len(history) == 1
+    assert json.loads(history[0])["phase"] == "planning_dispatch"
     assert audit_events[-1]["event_type"] == "codex_usage_recorded"
     assert ledger_calls == ["t_codex"]
+
+
+def test_record_event_preserves_repeated_phase_history(tmp_path: Path) -> None:
+    recorder, db, artifacts, _ = _recorder(tmp_path)
+    artifacts.run_dir("t_codex_repeat")
+    event = {
+        "task_id": "t_codex_repeat",
+        "phase": "planning_dispatch",
+        "model": "codex",
+        "input_tokens": 10,
+        "output_tokens": 1,
+        "total_tokens": 11,
+        "actual_codex_used": False,
+        "estimation_method": "test",
+        "created_at": "2026-07-01T00:00:00Z",
+        "metadata": {"step": 1},
+    }
+
+    recorder.record_event(event)
+    recorder.record_event({**event, "metadata": {"step": 2}, "total_tokens": 12})
+
+    rows = db.list_codex_usage_events(task_id="t_codex_repeat")
+    history = (artifacts.run_dir("t_codex_repeat") / "codex_usage" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    latest = json.loads((artifacts.run_dir("t_codex_repeat") / "codex_usage" / "planning_dispatch.json").read_text(encoding="utf-8"))
+
+    assert len(rows) == 2
+    assert [json.loads(line)["metadata"]["step"] for line in history] == [1, 2]
+    assert latest["metadata"]["step"] == 2
 
 
 def test_record_review_usage_marks_actual_codex_review(tmp_path: Path) -> None:

@@ -106,6 +106,7 @@ class CodexUsageRecorder:
     def record_event(self, event: dict[str, Any]) -> None:
         self.db.record_codex_usage_event(event)
         phase = str(event.get("phase") or "unknown")
+        self.artifacts.append_jsonl(event["task_id"], "codex_usage/events.jsonl", event)
         self.artifacts.write_json(event["task_id"], f"codex_usage/{phase}.json", event)
         self.db.append_event(
             event["task_id"],

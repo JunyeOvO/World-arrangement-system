@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from datetime import datetime
 from pathlib import Path
@@ -9,7 +10,6 @@ from typing import Any
 from orchestrator.artifacts import ArtifactStore
 from orchestrator.dashboard_status import (
     ACTIVE_STATUSES,
-    DONE_STATUSES,
     compute_top_status_counts,
     derive_dashboard_status,
 )
@@ -53,7 +53,6 @@ class ConsoleQueries:
         heartbeats = [heartbeat_view(row) for row in self.db.list_worker_heartbeats(limit=50)]
         live_task_ids = _live_task_ids(heartbeats)
         raw_tasks = self.db.list_tasks(limit=100)
-        _auto_dismiss_superseded_stale_running_tasks(self.db, raw_tasks, live_task_ids)
         dismissed = self.db.list_console_dismissed_task_ids()
         tasks = [
             _with_runtime_liveness(task_summary(row), live_task_ids, row)
@@ -203,7 +202,7 @@ class ConsoleQueries:
         priced_attempts = sum(1 for row in rows if has_price(row.get("model")))
         unpriced_attempts = len(rows) - priced_attempts
         durations = sorted(int(row.get("duration_ms") or 0) for row in rows)
-        p95 = durations[int(len(durations) * 0.95) - 1] if durations else 0
+        p95 = durations[math.ceil(len(durations) * 0.95) - 1] if durations else 0
         failures: dict[str, int] = {}
         for row in rows:
             reason = row.get("failure_reason") or "none"
@@ -742,46 +741,6 @@ def _normalize_big_status(value: str | None) -> str | None:
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-def _auto_dismiss_superseded_stale_running_tasks(
-    db: TaskDB,
-    tasks: list[dict[str, Any]],
-    live_task_ids: set[str],
-) -> None:
-    dismissed = db.list_console_dismissed_task_ids()
-    latest_success_by_project: dict[str, str] = {}
-    for task in tasks:
-        status = str(task.get("status") or "")
-        if status not in DONE_STATUSES:
-            continue
-        project_id = str(task.get("project_id") or "")
-        updated_at = str(task.get("updated_at") or "")
-        if updated_at >= latest_success_by_project.get(project_id, ""):
-            latest_success_by_project[project_id] = updated_at
-
-    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    for task in tasks:
-        task_id = str(task.get("task_id") or "")
-        if not task_id or task_id in dismissed or task_id in live_task_ids:
-            continue
-        status = str(task.get("status") or "")
-        if status not in ACTIVE_STATUSES:
-            continue
-        project_id = str(task.get("project_id") or "")
-        completed_at = latest_success_by_project.get(project_id)
-        if not completed_at or completed_at < str(task.get("updated_at") or ""):
-            continue
-        reason = "superseded by completed task in same project"
-        db.dismiss_console_task(task_id, now, reason=reason)
-        db.append_event(
-            task_id,
-            "console.task_auto_dismissed",
-            status,
-            status,
-            {"reason": reason, "completed_at": completed_at},
-            at=now,
-        )
 
 
 def _content_type(relative: str) -> str:

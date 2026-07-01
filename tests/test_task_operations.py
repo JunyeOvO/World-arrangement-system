@@ -92,6 +92,19 @@ def test_read_task_result_returns_index_and_truncated_artifacts(tmp_path: Path):
     assert json.loads(result["metrics.json"]) == {"status": "success"}
 
 
+def test_read_task_result_refuses_artifact_escape(tmp_path: Path, monkeypatch):
+    service, db, artifacts, _ = _service(tmp_path)
+    task_id = "t_escape"
+    _create_task(db, tmp_path / "runs" / task_id, task_id=task_id)
+    outside = tmp_path / "outside.md"
+    outside.write_text("secret outside run", encoding="utf-8")
+    monkeypatch.setattr(artifacts, "index", lambda _task_id: {"final.md": str(outside)})
+
+    result = service.read_task_result(task_id)
+
+    assert result["final.md"] == "[artifact escaped run directory]"
+
+
 def test_cancel_task_writes_control_request_and_cancel_event(tmp_path: Path):
     service, db, _, _ = _service(tmp_path)
     task_id = "t_cancel"
@@ -137,7 +150,7 @@ def test_get_task_control_reports_unreadable_json(tmp_path: Path):
 def test_rollback_task_records_policy_learning_signal(tmp_path: Path):
     service, db, _, policy_calls = _service(tmp_path)
     task_id = "t_rollback"
-    _create_task(db, tmp_path / "runs" / task_id, task_id=task_id)
+    _create_task(db, tmp_path / "runs" / task_id, task_id=task_id, status="PR_CREATED")
 
     result = service.rollback_task(task_id, cleanup_worktree=False)
 
@@ -145,6 +158,19 @@ def test_rollback_task_records_policy_learning_signal(tmp_path: Path):
     assert db.list_events(task_id)[-1]["event_type"] == "rolled_back"
     assert policy_calls[-1]["kwargs"]["rollback"] is True
     assert policy_calls[-1]["kwargs"]["success"] is False
+
+
+def test_rollback_task_rejects_state_machine_bypass(tmp_path: Path):
+    service, db, _, policy_calls = _service(tmp_path)
+    task_id = "t_rollback_invalid"
+    _create_task(db, tmp_path / "runs" / task_id, task_id=task_id, status="EXECUTING")
+
+    result = service.rollback_task(task_id)
+
+    assert result["status"] == "INVALID_STATE"
+    assert result["from_state"] == "EXECUTING"
+    assert db.get_task(task_id)["status"] == "EXECUTING"
+    assert policy_calls == []
 
 
 def test_record_task_baseline_writes_artifact_and_refreshes_token_ledger(tmp_path: Path):
@@ -161,3 +187,21 @@ def test_record_task_baseline_writes_artifact_and_refreshes_token_ledger(tmp_pat
     ledger = json.loads((run_dir / "token_ledger.json").read_text(encoding="utf-8"))
     assert ledger["counterfactual"]["status"] == "estimated"
     assert ledger["baselines"][0]["source"] == "replay_estimate"
+
+
+def test_record_task_baseline_does_not_write_db_when_artifact_fails(tmp_path: Path, monkeypatch):
+    service, db, artifacts, _ = _service(tmp_path)
+    task_id = "t_baseline_fail"
+    _create_task(db, tmp_path / "runs" / task_id, task_id=task_id)
+
+    def fail_append(*args: Any, **kwargs: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(artifacts, "append_jsonl", fail_append)
+
+    try:
+        service.record_task_baseline(task_id, input_tokens=10, output_tokens=5)
+    except OSError:
+        pass
+
+    assert db.list_task_baselines(task_id) == []

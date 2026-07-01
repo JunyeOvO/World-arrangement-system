@@ -161,11 +161,53 @@ def test_attempt_metrics_recorder_writes_metrics_and_token_ledger(tmp_path):
     )
 
     attempt_metrics = json.loads((run_dir / "attempts" / "01" / "metrics.json").read_text(encoding="utf-8"))
+    history_lines = (run_dir / "metrics_history.jsonl").read_text(encoding="utf-8").splitlines()
     ledger = json.loads((run_dir / "token_ledger.json").read_text(encoding="utf-8"))
     row = db.list_task_metrics("t_recorder")[0]
 
     assert attempt_metrics["memory_hit_count"] == 4
+    assert json.loads(history_lines[0])["attempt_no"] == 1
     assert attempt_metrics["memory_miss_count"] == 2
     assert attempt_metrics["changed_files_count"] == 1
     assert row["total_cost_usd"] == 0.25
     assert ledger["worker"]["total_tokens"] == 1250
+
+
+def test_attempt_metrics_history_preserves_multiple_attempts(tmp_path):
+    run_dir = tmp_path / "runs" / "t_recorder"
+    stream = run_dir / "worker" / "worker.stream.jsonl"
+    stream.parent.mkdir(parents=True)
+    stream.write_text(
+        "\n".join([
+            json.dumps({"type": "usage", "input_tokens": 100, "output_tokens": 10, "total_cost_usd": 0.01}),
+        ]),
+        encoding="utf-8",
+    )
+    db = TaskDB(tmp_path / "state.sqlite")
+    db.create_task(
+        {
+            "task_id": "t_recorder",
+            "project_id": "p1",
+            "repo_path": str(tmp_path),
+            "user_goal": "inspect project",
+            "status": "EXECUTING",
+            "created_at": "2026-06-30T01:00:00Z",
+            "updated_at": "2026-06-30T01:00:01Z",
+            "run_dir": str(run_dir),
+        }
+    )
+
+    class Result:
+        status = "success"
+        stdout_path = str(stream)
+        changed_files = []
+
+    recorder = AttemptMetricsRecorder(db)
+    recorder.write_attempt_metrics("t_recorder", 1, {"worker": "claude_code", "model": "deepseek_pro"}, Result(), None)
+    recorder.write_attempt_metrics("t_recorder", 2, {"worker": "claude_code", "model": "deepseek_pro"}, Result(), None)
+
+    history = [json.loads(line) for line in (run_dir / "metrics_history.jsonl").read_text(encoding="utf-8").splitlines()]
+    latest = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+
+    assert [row["attempt_no"] for row in history] == [1, 2]
+    assert latest["attempt_no"] == 2

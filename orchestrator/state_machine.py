@@ -79,8 +79,8 @@ TRANSITIONS: dict[str, set[str]] = {
     "CODEX_REVIEWING": {"POLICY_LEARNING", "NEEDS_USER", "NEEDS_REVIEW", "FAILED_FINAL"},
 
     # ── Post-execution flow ──
-    "POLICY_LEARNING": {"PR_CREATED", "DONE", "DONE_WITH_BLOCK"},
-    "PR_CREATED": {"DONE"},
+    "POLICY_LEARNING": {"PR_CREATED", "DONE", "DONE_WITH_BLOCK", "ROLLED_BACK"},
+    "PR_CREATED": {"DONE", "ROLLED_BACK"},
 
     # ── Recovery / escalation ──
     "NEEDS_USER": {"NEW", "CANCELLED"},
@@ -91,7 +91,7 @@ TRANSITIONS: dict[str, set[str]] = {
     # ── Terminal states ──
     "DONE": frozenset(),
     "DONE_WITH_BLOCK": frozenset(),
-    "FAILED_FINAL": frozenset(),
+    "FAILED_FINAL": {"ROLLED_BACK"},
     "CANCELLED": frozenset(),
     "ROLLED_BACK": frozenset(),
 }

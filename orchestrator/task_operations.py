@@ -60,11 +60,19 @@ class TaskOperationsService:
         task = self._refresh_after_reap(task)
         index = self.artifacts.index(task_id)
         result: dict[str, Any] = {"task": task, "artifacts": index}
+        base = Path(str(task["run_dir"])).resolve() if task.get("run_dir") else None
         for key in self.RESULT_ARTIFACTS:
             path = index.get(key)
-            if path:
-                text = Path(path).read_text(encoding="utf-8", errors="replace")
-                result[key] = text[:20000]
+            if not path or base is None:
+                continue
+            target = Path(path).resolve()
+            try:
+                target.relative_to(base)
+            except ValueError:
+                result[key] = "[artifact escaped run directory]"
+                continue
+            text = target.read_text(encoding="utf-8", errors="replace")
+            result[key] = text[:20000]
         return result
 
     def record_task_baseline(
@@ -95,8 +103,8 @@ class TaskOperationsService:
                 artifact_index=self.artifacts.index(task_id),
                 baseline_kind=baseline_kind or "codex_only_replay",
             )
-        self.db.record_task_baseline(baseline)
         self.artifacts.append_jsonl(task_id, "baselines/task_baselines.jsonl", baseline)
+        self.db.record_task_baseline(baseline)
         self.db.append_event(
             task_id,
             "task_baseline_recorded",
@@ -169,6 +177,14 @@ class TaskOperationsService:
         task = self.db.get_task(task_id)
         if not task:
             return {"status": "NOT_FOUND", "task_id": task_id}
+        if not can_transition(str(task.get("status") or ""), "ROLLED_BACK"):
+            return {
+                "status": "INVALID_STATE",
+                "task_id": task_id,
+                "from_state": task.get("status"),
+                "to_state": "ROLLED_BACK",
+                "reason": "rollback is not allowed from current state",
+            }
         self.db.update_task(task_id, status="ROLLED_BACK", updated_at=self.now())
         self.db.append_event(task_id, "rolled_back", task["status"], "ROLLED_BACK", {"cleanup_worktree": cleanup_worktree})
         self.record_policy_learning(

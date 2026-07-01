@@ -43,6 +43,7 @@ class AttemptMetricsRecorder:
             **memory_metric_kwargs(read_task_artifact(run_dir)),
         )
         write_metrics(metrics, run_dir / "attempts" / f"{attempt_no:02d}" / "metrics.json")
+        append_metrics_history(metrics.to_dict(), run_dir / "metrics_history.jsonl")
         write_metrics(metrics, run_dir / "metrics.json")
         self.db.upsert_task_metrics(metrics.to_dict())
         self.write_token_ledger(task_id)
@@ -76,6 +77,7 @@ class AttemptMetricsRecorder:
             **memory_metric_kwargs(task),
         )
         write_metrics(metrics, run_dir / "attempts" / "01" / "metrics.json")
+        append_metrics_history(metrics.to_dict(), run_dir / "metrics_history.jsonl")
         write_metrics(metrics, run_dir / "metrics.json")
         self.db.upsert_task_metrics(metrics.to_dict())
         self.write_token_ledger(task_id)
@@ -90,6 +92,12 @@ def read_task_artifact(run_dir: Path) -> dict[str, Any]:
     except (json.JSONDecodeError, OSError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def append_metrics_history(payload: dict[str, Any], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
 def memory_metric_kwargs(task: dict[str, Any]) -> dict[str, int | None]:

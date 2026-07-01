@@ -119,7 +119,7 @@ def test_console_snapshot_does_not_count_stale_executing_without_heartbeat(tmp_p
     assert "no fresh heartbeat" in task["status_note"]
 
 
-def test_console_snapshot_auto_dismisses_stale_executing_when_project_completed(tmp_path: Path):
+def test_console_snapshot_does_not_mutate_stale_executing_when_project_completed(tmp_path: Path):
     service = StubService(tmp_path)
     stale_task_id = _create_task(
         service,
@@ -138,9 +138,9 @@ def test_console_snapshot_auto_dismisses_stale_executing_when_project_completed(
     status, _, payload = api.handle_get("/api/console/snapshot")
 
     assert status == 200
-    assert all(task["task_id"] != stale_task_id for task in payload["tasks"])
-    assert service.db.list_console_dismissed_task_ids() == {stale_task_id}
-    assert service.db.list_events(stale_task_id)[-1]["event_type"] == "console.task_auto_dismissed"
+    assert any(task["task_id"] == stale_task_id for task in payload["tasks"])
+    assert service.db.list_console_dismissed_task_ids() == set()
+    assert all(event["event_type"] != "console.task_auto_dismissed" for event in service.db.list_events(stale_task_id))
 
 
 def test_console_snapshot_counts_executing_with_fresh_heartbeat(tmp_path: Path):
@@ -522,6 +522,36 @@ def test_metrics_summary_and_models_compute_cost_from_tokens(tmp_path: Path):
     assert models["models"][0]["pricing_complete"] is True
     assert models["models"][0]["avg_cost_usd"] == 1.308625
     assert models["models"][0]["total_cost_usd"] == 1.308625
+
+
+def test_metrics_summary_p95_duration_uses_ceil_rank(tmp_path: Path):
+    service = StubService(tmp_path)
+    _create_task(service, status="COMPLETED_WITH_PATCH", task_id="task_p95")
+    for attempt_no, duration_ms in enumerate(range(100, 1100, 100), start=1):
+        service.db.upsert_task_metrics({
+            "task_id": "task_p95",
+            "attempt_no": attempt_no,
+            "worker": "claude_code",
+            "model": "deepseek_flash",
+            "status": "success",
+            "failure_reason": "",
+            "total_cost_usd": 0.0,
+            "duration_ms": duration_ms,
+            "duration_api_ms": duration_ms,
+            "num_turns": 1,
+            "input_tokens": 10,
+            "output_tokens": 1,
+            "cache_read_input_tokens": 0,
+            "changed_files_count": 0,
+            "build_passed": True,
+            "review_approved": True,
+            "created_at": f"2026-06-28T13:{attempt_no:02d}:00Z",
+        })
+    api = ConsoleAPI(service)  # type: ignore[arg-type]
+
+    _, _, summary = api.handle_get("/api/metrics/summary")
+
+    assert summary["p95_duration_ms"] == 1000
 
 
 def test_metrics_reports_unpriced_models_instead_of_silent_zero_cost(tmp_path: Path):
