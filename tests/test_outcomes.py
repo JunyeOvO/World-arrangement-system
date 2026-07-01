@@ -78,6 +78,26 @@ def test_success_without_explicit_verification_is_not_marked_verified():
     assert row["quality_state"] == "unknown"
 
 
+def test_build_metric_does_not_stand_in_for_test_result():
+    row = derive_task_outcome(
+        {
+            "task_id": "task_build_only",
+            "project_id": "travel_with_me",
+            "status": "COMPLETED_WITH_PATCH",
+            "user_goal": "修复 UI bug",
+        },
+        metrics=[{"changed_files_count": 1, "build_passed": True, "review_approved": True}],
+        review={"approved": True},
+        result={"changed_files": ["a.ts"]},
+    )
+
+    assert row["outcome"] == "success"
+    assert row["tests_passed"] is None
+    assert row["build_passed"] is True
+    assert row["review_approved"] is True
+    assert row["quality_state"] == "unknown"
+
+
 def test_summarize_outcomes_rates():
     summary = summarize_outcomes([
         {"outcome": "success", "tests_passed": True, "review_approved": True, "user_acceptance": "accepted"},

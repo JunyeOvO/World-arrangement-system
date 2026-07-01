@@ -46,7 +46,7 @@ def derive_task_outcome(
     status = str(task.get("status") or "")
     now = _now()
     changed_files_count = _changed_files_count(metrics, verify, result)
-    tests_passed = _first_bool(verify.get("tests_passed"), _metric_bool(metrics, "build_passed"))
+    tests_passed = _first_bool(verify.get("tests_passed"), _metric_bool(metrics, "tests_passed"))
     build_passed = _first_bool(verify.get("build_passed"), _metric_bool(metrics, "build_passed"))
     review_approved = _first_bool(review.get("approved"), _metric_bool(metrics, "review_approved"))
     degraded = bool(review.get("degraded") or result.get("degraded") or result.get("mock_result"))
