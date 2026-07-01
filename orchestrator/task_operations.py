@@ -8,6 +8,7 @@ from .artifacts import ArtifactStore
 from .baselines import build_manual_baseline, build_replay_baseline
 from .db import TaskDB
 from .process_control import request_cancel
+from .state_machine import can_transition
 from .task_artifact_repair import TaskArtifactRepairService
 
 
@@ -145,6 +146,14 @@ class TaskOperationsService:
         task = self.db.get_task(task_id)
         if not task:
             return {"status": "NOT_FOUND", "task_id": task_id}
+        if not can_transition(str(task.get("status") or ""), "CANCELLED"):
+            return {
+                "status": "INVALID_STATE",
+                "task_id": task_id,
+                "from_state": task.get("status"),
+                "to_state": "CANCELLED",
+                "reason": "cancel is not allowed from current state",
+            }
         control = request_cancel(Path(task["run_dir"]), reason)
         self.db.update_task(task_id, status="CANCELLED", updated_at=self.now())
         self.db.append_event(

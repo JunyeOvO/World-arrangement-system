@@ -44,6 +44,12 @@ class TaskExecutionGate:
         task_id = task["task_id"]
         task_type = self.approval_policy.classify_task_type(task["user_goal"], project)
         task["task_type"] = task_type
+        if task.get("_approval_granted"):
+            return ExecutionGateResult(
+                continue_execution=True,
+                task_type=task_type,
+                transitions=[],
+            )
 
         risk = self.risk_evaluator(
             task["user_goal"],

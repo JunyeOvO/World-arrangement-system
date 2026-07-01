@@ -106,6 +106,20 @@ def test_cancel_task_writes_control_request_and_cancel_event(tmp_path: Path):
     assert db.list_events(task_id)[-1]["event_type"] == "cancelled"
 
 
+def test_cancel_task_rejects_terminal_state(tmp_path: Path):
+    service, db, _, _ = _service(tmp_path)
+    task_id = "t_done"
+    run_dir = tmp_path / "runs" / task_id
+    _create_task(db, run_dir, task_id=task_id, status="DONE")
+
+    result = service.cancel_task(task_id, reason="too late")
+
+    assert result["status"] == "INVALID_STATE"
+    assert result["from_state"] == "DONE"
+    assert not (run_dir / "control" / "cancel.requested").exists()
+    assert db.get_task(task_id)["status"] == "DONE"
+
+
 def test_get_task_control_reports_unreadable_json(tmp_path: Path):
     service, db, _, _ = _service(tmp_path)
     task_id = "t_control"

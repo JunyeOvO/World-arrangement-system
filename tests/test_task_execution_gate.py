@@ -74,3 +74,17 @@ def test_execution_gate_low_risk_continues_after_auto_summary(tmp_path: Path):
     ]
     approval = json.loads(artifacts.path("t_gate", "approval.json").read_text(encoding="utf-8"))
     assert approval["mode"] == "AUTO_WITH_SUMMARY"
+
+
+def test_execution_gate_skips_second_approval_after_user_approval(tmp_path: Path):
+    gate, artifacts = _gate(tmp_path)
+    task = _task("edit deploy/prod/release.yaml", risk_level="medium")
+    task["planned_files"] = ["deploy/prod/release.yaml"]
+    task["_approval_granted"] = True
+
+    result = gate.run(task, {"repo": str(tmp_path)})
+
+    assert result.continue_execution is True
+    assert result.transitions == []
+    assert task["task_type"]
+    assert not artifacts.path("t_gate", "approval.json").exists()

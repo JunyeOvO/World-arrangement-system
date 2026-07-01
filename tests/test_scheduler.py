@@ -525,6 +525,93 @@ def test_get_task_control_reads_control_files(tmp_path, monkeypatch):
     assert result["heartbeat"]["status"] == "running"
 
 
+def test_approve_task_resumes_hard_approval_waiting_task(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_ORCHESTRATOR_HOME", str(tmp_path / "runtime"))
+    service = OrchestratorService()
+    run_dir = service.artifacts.run_dir("t_approval")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    service.db.create_task({
+        "task_id": "t_approval",
+        "project_id": "p",
+        "repo_path": str(repo),
+        "user_goal": "touch prod config",
+        "status": "HARD_APPROVAL_WAITING",
+        "created_at": "now",
+        "updated_at": "now",
+        "route_worker": "claude_code",
+        "route_model": "deepseek_pro",
+        "route_variant": "",
+        "pr_url": None,
+        "run_dir": str(run_dir),
+    })
+    calls = []
+
+    def fake_execute(task, project, dry_run=False):
+        calls.append((task, project, dry_run))
+        service.execution_callbacks.set_status(task["task_id"], "ROUTED", "routed", {"worker": "fake"})
+
+    monkeypatch.setattr(service, "_execute", fake_execute)
+
+    result = service.approve_task("t_approval", user="tester")
+
+    assert result["status"] == "approved"
+    assert result["resumed"] is True
+    assert calls
+    assert calls[0][0]["_approval_granted"] is True
+    assert service.db.get_task("t_approval")["status"] == "ROUTED"
+    events = service.db.list_events("t_approval")
+    assert any(event["event_type"] == "approval_approved" for event in events)
+
+
+def test_approve_task_rejects_non_approval_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_ORCHESTRATOR_HOME", str(tmp_path / "runtime"))
+    service = OrchestratorService()
+    service.db.create_task({
+        "task_id": "t_done",
+        "project_id": "p",
+        "repo_path": str(tmp_path),
+        "user_goal": "done",
+        "status": "DONE",
+        "created_at": "now",
+        "updated_at": "now",
+        "route_worker": "claude_code",
+        "route_model": "deepseek_pro",
+        "route_variant": "",
+        "pr_url": None,
+        "run_dir": str(tmp_path / "run"),
+    })
+
+    result = service.approve_task("t_done", user="tester")
+
+    assert result["status"] == "INVALID_STATE"
+    assert service.db.get_task("t_done")["status"] == "DONE"
+
+
+def test_reject_task_rejects_non_approval_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_ORCHESTRATOR_HOME", str(tmp_path / "runtime"))
+    service = OrchestratorService()
+    service.db.create_task({
+        "task_id": "t_done",
+        "project_id": "p",
+        "repo_path": str(tmp_path),
+        "user_goal": "done",
+        "status": "DONE",
+        "created_at": "now",
+        "updated_at": "now",
+        "route_worker": "claude_code",
+        "route_model": "deepseek_pro",
+        "route_variant": "",
+        "pr_url": None,
+        "run_dir": str(tmp_path / "run"),
+    })
+
+    result = service.reject_task("t_done", reason="late")
+
+    assert result["status"] == "INVALID_STATE"
+    assert service.db.get_task("t_done")["status"] == "DONE"
+
+
 def test_scheduler_writes_verify_and_metrics_artifacts(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()

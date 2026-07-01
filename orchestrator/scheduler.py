@@ -15,6 +15,7 @@ from .verifier import verify
 from .worker_prompt import build_worker_prompt
 from .workers.claude_code_worker import ClaudeCodeWorker
 from .workers.opencode_worker import OpenCodeWorker
+from .state_machine import can_transition
 
 
 WORKERS = {
@@ -200,16 +201,66 @@ class OrchestratorService:
         task = self.db.get_task(task_id)
         if not task:
             return {"status": "NOT_FOUND", "task_id": task_id}
-        return self.approval_policy.approve_task(task, user=user)
+        if not can_transition(str(task.get("status") or ""), "PLANNED"):
+            return {
+                "status": "INVALID_STATE",
+                "task_id": task_id,
+                "from_state": task.get("status"),
+                "to_state": "PLANNED",
+                "reason": "approval is not allowed from current state",
+            }
+        result = self.approval_policy.approve_task(task, user=user)
+        self.execution_callbacks.set_status(
+            task_id,
+            "PLANNED",
+            "approval_approved",
+            {"user": user, "decision": "approved"},
+        )
+        resumed_task = self.db.get_task(task_id) or task
+        resumed_task["_approval_granted"] = True
+        self._execute(resumed_task, self._project_for_task(resumed_task), dry_run=False)
+        current = self.db.get_task(task_id)
+        return {**result, "resumed": True, "status_after_approval": current.get("status") if current else None}
 
     def reject_task(self, task_id: str, reason: str = "") -> dict[str, Any]:
         """User rejects a task awaiting approval."""
         task = self.db.get_task(task_id)
         if not task:
             return {"status": "NOT_FOUND", "task_id": task_id}
+        if not can_transition(str(task.get("status") or ""), "CANCELLED"):
+            return {
+                "status": "INVALID_STATE",
+                "task_id": task_id,
+                "from_state": task.get("status"),
+                "to_state": "CANCELLED",
+                "reason": "rejection is not allowed from current state",
+            }
         result = self.approval_policy.reject_task(task, reason)
-        self.cancel_task(task_id, reason=f"User rejected: {reason}")
-        return result
+        cancel_result = self.cancel_task(task_id, reason=f"User rejected: {reason}")
+        if cancel_result.get("status") == "INVALID_STATE":
+            return cancel_result
+        return {**result, "cancelled": cancel_result.get("status") == "CANCELLED"}
+
+    def _project_for_task(self, task: dict[str, Any]) -> dict[str, Any]:
+        repo_path = str(task.get("repo_path") or "")
+        if repo_path:
+            detected = self.detect_project(repo_path=repo_path)
+            project = detected.get("project") if isinstance(detected, dict) else None
+            if isinstance(project, dict) and project.get("project_id") == task.get("project_id"):
+                return project
+        return {
+            "project_id": task.get("project_id", ""),
+            "name": task.get("project_id", ""),
+            "repo": repo_path,
+            "stack": [],
+            "test_commands": [],
+            "build_commands": [],
+            "forbidden_paths": [],
+            "default_worker": task.get("route_worker") or "claude_code",
+            "default_model": task.get("route_model") or "deepseek_pro",
+            "allow_auto_pr": False,
+            "allow_remote_push": False,
+        }
 
     def list_learned_rules(self, project_id: str) -> dict[str, Any]:
         """List learned approval rules for a project."""
