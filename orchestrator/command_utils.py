@@ -48,7 +48,7 @@ def subprocess_cwd(value: str, cwd: str | Path) -> str | Path | None:
 
 
 def subprocess_env(value: str, env: dict[str, str]) -> dict[str, str] | None:
-    return None if command_runs_in_wsl(value) else env
+    return env
 
 
 def path_for_wsl(path: str | Path) -> str:

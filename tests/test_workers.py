@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 from orchestrator.process_control import ManagedProcessResult
-from orchestrator.workers.claude_code_worker import ClaudeCodeWorker
+from orchestrator.workers.claude_code_worker import ClaudeCodeWorker, _build_minimal_worker_env
 from orchestrator.workers.git_diff import detect_changed_files, export_patch
 from orchestrator.workers.opencode_worker import OpenCodeWorker
 
@@ -14,6 +14,25 @@ def _dummy_route(model: str = "deepseek_pro", worker: str = "claude_code") -> di
 
 def _dummy_task() -> dict:
     return {"run_dir": ".", "task_id": "t_test", "test_commands": [], "build_commands": []}
+
+
+def test_minimal_worker_env_blocks_sensitive_parent_vars(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "parent-secret")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example")
+    monkeypatch.setenv("SystemRoot", r"C:\Windows")
+
+    env = _build_minimal_worker_env(
+        {
+            "ANTHROPIC_AUTH_TOKEN": "profile-token",
+            "DEEPSEEK_API_KEY": "profile-secret",
+        }
+    )
+
+    assert env["ANTHROPIC_AUTH_TOKEN"] == "profile-token"
+    assert env["SystemRoot"] == r"C:\Windows"
+    assert env["AI_ORCHESTRATOR_SANITIZED_ENV"] == "true"
+    assert "DEEPSEEK_API_KEY" not in env
+    assert "HTTPS_PROXY" not in env
 
 
 def test_claude_code_worker_forbids_glm():

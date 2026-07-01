@@ -17,7 +17,13 @@ def test_build_wsl_command_changes_directory_inside_wsl():
     assert cmd[:4] == ["wsl", "-e", "sh", "-lc"]
     assert cmd[4] == "cd /mnt/c/tmp/repo && claude -p hello"
     assert subprocess_cwd("wsl -e claude", r"C:\tmp\repo") is None
-    assert subprocess_env("wsl -e claude", {"PATH": "x"}) is None
+    assert subprocess_env("wsl -e claude", {"PATH": "x"}) == {"PATH": "x"}
+
+
+def test_wsl_subprocess_env_uses_sanitized_env_not_parent_inheritance():
+    env = {"PATH": "safe", "AI_ORCHESTRATOR_SANITIZED_ENV": "true"}
+
+    assert subprocess_env("wsl -e claude", env) is env
 
 
 def test_path_for_wsl_converts_windows_drive_path():

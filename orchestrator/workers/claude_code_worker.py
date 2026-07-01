@@ -23,6 +23,8 @@ _SUMMARY_LIMIT = 8000
 # ── Minimal env allowlist for worker subprocess (security: no full os.environ copy) ──
 _BASE_ENV_ALLOWLIST = {
     "PATH", "HOME", "USER", "SHELL", "LANG", "LC_ALL", "TERM", "TMPDIR",
+    "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP",
+    "USERPROFILE", "LOCALAPPDATA", "APPDATA", "PROGRAMDATA",
 }
 
 _WORKER_ENV_ALLOWLIST = {

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .base import Worker, WorkerResult
 from .git_diff import detect_changed_files, export_patch, validate_file_ownership
+from .claude_code_worker import _build_minimal_worker_env
 from ..command_utils import build_command, command_available, subprocess_cwd, subprocess_env
 from ..constants import DEFAULT_OPENCODE_CMD
 from ..env_profiles import model_spec
@@ -160,10 +161,11 @@ class OpenCodeWorker(Worker):
                 rollback_notes=None,
             )
         timeout_sec = int(route.get("timeout_sec", 2700))
+        child_env = _build_minimal_worker_env(os.environ.copy())
         proc = run_managed_process(
             cmd,
             cwd=subprocess_cwd(opencode_cmd, worktree),
-            env=subprocess_env(opencode_cmd, os.environ.copy()),
+            env=subprocess_env(opencode_cmd, child_env),
             stdout_path=stdout_path,
             stderr_path=stderr_path,
             run_dir=Path(task["run_dir"]),

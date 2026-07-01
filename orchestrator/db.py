@@ -237,12 +237,17 @@ class TaskDB:
         delay = 0.05
         last_error: Exception | None = None
         for _ in range(retries):
+            con: sqlite3.Connection | None = None
             try:
                 con = sqlite3.connect(self.path, timeout=3)
                 con.row_factory = sqlite3.Row
-                yield con
-                con.commit()
-                con.close()
+                try:
+                    yield con
+                except Exception:
+                    con.rollback()
+                    raise
+                else:
+                    con.commit()
                 return
             except sqlite3.OperationalError as exc:
                 last_error = exc
@@ -250,6 +255,9 @@ class TaskDB:
                     raise
                 time.sleep(delay)
                 delay *= 2
+            finally:
+                if con is not None:
+                    con.close()
         if last_error:
             raise last_error
 
@@ -258,11 +266,62 @@ class TaskDB:
             con.executescript(SCHEMA)
             self._ensure_column(con, "task_metrics", "memory_hit_count", "INTEGER")
             self._ensure_column(con, "task_metrics", "memory_miss_count", "INTEGER")
+            self._ensure_learned_patterns_unique_index(con)
 
     def _ensure_column(self, con: sqlite3.Connection, table: str, column: str, definition: str) -> None:
         existing = {row[1] for row in con.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def _ensure_learned_patterns_unique_index(self, con: sqlite3.Connection) -> None:
+        groups = con.execute(
+            """
+            SELECT project_id, task_type, path_pattern
+            FROM learned_patterns
+            GROUP BY project_id, task_type, path_pattern
+            HAVING COUNT(*) > 1
+            """
+        ).fetchall()
+        for group in groups:
+            rows = con.execute(
+                """
+                SELECT * FROM learned_patterns
+                WHERE project_id=? AND task_type=? AND path_pattern=?
+                ORDER BY id ASC
+                """,
+                [group["project_id"], group["task_type"], group["path_pattern"]],
+            ).fetchall()
+            if len(rows) <= 1:
+                continue
+            keep = dict(rows[0])
+            duplicate_ids = [row["id"] for row in rows[1:]]
+            approvals = sum(int(row["approvals_count"] or 0) for row in rows)
+            success = sum(int(row["success_count"] or 0) for row in rows)
+            failure = sum(int(row["failure_count"] or 0) for row in rows)
+            rollback = sum(int(row["rollback_count"] or 0) for row in rows)
+            total = success + failure + rollback
+            trust = (success * 1.0 - failure * 0.5 - rollback * 2.0) / max(total, 1)
+            trust = max(0.0, min(1.0, trust + 0.5))
+            confidence = max(float(row["confidence"] or 0) for row in rows)
+            active = 1 if any(bool(row["active"]) for row in rows) else 0
+            updated_at = max(str(row["updated_at"] or "") for row in rows)
+            con.execute(
+                """
+                UPDATE learned_patterns
+                SET approvals_count=?, success_count=?, failure_count=?,
+                    rollback_count=?, trust_score=?, confidence=?,
+                    active=?, updated_at=?
+                WHERE id=?
+                """,
+                [approvals, success, failure, rollback, trust, confidence, active, updated_at, keep["id"]],
+            )
+            con.executemany("DELETE FROM learned_patterns WHERE id=?", [(duplicate_id,) for duplicate_id in duplicate_ids])
+        con.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_learned_patterns_unique
+            ON learned_patterns(project_id, task_type, path_pattern)
+            """
+        )
 
     def create_task(self, row: dict[str, Any]) -> None:
         self.init()
@@ -666,39 +725,47 @@ class TaskDB:
     def upsert_learned_pattern(self, row: dict[str, Any]) -> None:
         """Insert or update a learned pattern by project+task_type+path_pattern uniqueness."""
         self.init()
+        cols = [
+            "project_id", "task_type", "path_pattern", "worker", "model", "variant",
+            "approvals_count", "success_count", "failure_count", "rollback_count",
+            "trust_score", "confidence", "suggested_mode", "active",
+            "created_at", "updated_at", "expires_at",
+        ]
+        values = [row.get(c) for c in cols]
         with self.connect() as con:
-            existing = con.execute(
-                "SELECT id, approvals_count, success_count, failure_count, rollback_count, trust_score FROM learned_patterns WHERE project_id=? AND task_type=? AND path_pattern=?",
-                [row["project_id"], row["task_type"], row["path_pattern"]],
-            ).fetchone()
-            if existing:
-                e = dict(existing)
-                new_approvals = e["approvals_count"] + row.get("approvals_count", 0)
-                new_success = e["success_count"] + row.get("success_count", 0)
-                new_failure = e["failure_count"] + row.get("failure_count", 0)
-                new_rollback = e["rollback_count"] + row.get("rollback_count", 0)
-                total = new_success + new_failure + new_rollback
-                new_trust = (new_success * 1.0 - new_failure * 0.5 - new_rollback * 2.0) / max(total, 1)
-                new_trust = max(0.0, min(1.0, new_trust + 0.5))
-                con.execute(
-                    """UPDATE learned_patterns SET
-                       approvals_count=?, success_count=?, failure_count=?,
-                       rollback_count=?, trust_score=?, updated_at=?
-                       WHERE id=?""",
-                    [new_approvals, new_success, new_failure, new_rollback, new_trust, row.get("updated_at", ""), e["id"]],
-                )
-            else:
-                cols = [
-                    "project_id", "task_type", "path_pattern", "worker", "model", "variant",
-                    "approvals_count", "success_count", "failure_count", "rollback_count",
-                    "trust_score", "confidence", "suggested_mode", "active",
-                    "created_at", "updated_at", "expires_at",
-                ]
-                values = [row.get(c) for c in cols]
-                con.execute(
-                    f"INSERT INTO learned_patterns ({','.join(cols)}) VALUES ({','.join(['?'] * len(cols))})",
-                    values,
-                )
+            con.execute(
+                f"""
+                INSERT INTO learned_patterns ({','.join(cols)})
+                VALUES ({','.join(['?'] * len(cols))})
+                ON CONFLICT(project_id, task_type, path_pattern) DO UPDATE SET
+                  worker=COALESCE(excluded.worker, learned_patterns.worker),
+                  model=COALESCE(excluded.model, learned_patterns.model),
+                  variant=COALESCE(excluded.variant, learned_patterns.variant),
+                  approvals_count=COALESCE(learned_patterns.approvals_count, 0) + COALESCE(excluded.approvals_count, 0),
+                  success_count=COALESCE(learned_patterns.success_count, 0) + COALESCE(excluded.success_count, 0),
+                  failure_count=COALESCE(learned_patterns.failure_count, 0) + COALESCE(excluded.failure_count, 0),
+                  rollback_count=COALESCE(learned_patterns.rollback_count, 0) + COALESCE(excluded.rollback_count, 0),
+                  trust_score=max(0.0, min(1.0, (
+                    (
+                      (COALESCE(learned_patterns.success_count, 0) + COALESCE(excluded.success_count, 0)) * 1.0
+                      - (COALESCE(learned_patterns.failure_count, 0) + COALESCE(excluded.failure_count, 0)) * 0.5
+                      - (COALESCE(learned_patterns.rollback_count, 0) + COALESCE(excluded.rollback_count, 0)) * 2.0
+                    )
+                    / max(
+                      COALESCE(learned_patterns.success_count, 0) + COALESCE(excluded.success_count, 0)
+                      + COALESCE(learned_patterns.failure_count, 0) + COALESCE(excluded.failure_count, 0)
+                      + COALESCE(learned_patterns.rollback_count, 0) + COALESCE(excluded.rollback_count, 0),
+                      1
+                    )
+                  ) + 0.5)),
+                  confidence=max(COALESCE(learned_patterns.confidence, 0), COALESCE(excluded.confidence, 0)),
+                  suggested_mode=COALESCE(excluded.suggested_mode, learned_patterns.suggested_mode),
+                  active=max(COALESCE(learned_patterns.active, 0), COALESCE(excluded.active, 0)),
+                  updated_at=COALESCE(excluded.updated_at, learned_patterns.updated_at),
+                  expires_at=COALESCE(excluded.expires_at, learned_patterns.expires_at)
+                """,
+                values,
+            )
 
     def get_learned_patterns(self, project_id: str, active_only: bool = True) -> list[dict[str, Any]]:
         self.init()
