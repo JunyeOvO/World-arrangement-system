@@ -72,6 +72,41 @@ def test_preparation_creates_worktree_and_status(tmp_path: Path):
     assert (tmp_path / "runs" / "t_prepare" / "task.json").exists()
 
 
+def test_preparation_keeps_registered_memory_when_worktree_refresh_fails(tmp_path: Path):
+    statuses = []
+
+    def failing_memory_refresher(*args, **kwargs):
+        raise OSError("worktree unavailable")
+
+    service = TaskPreparationService(
+        artifacts=ArtifactStore(tmp_path / "runs"),
+        set_status=lambda task_id, status, event, payload: statuses.append((status, event, payload)),
+        worktree_preparer=_worktree_preparer,
+        project_memory_refresher=failing_memory_refresher,
+    )
+    task = {
+        **_task(tmp_path),
+        "project_memory": {
+            "memory": {"source_kind": "registered_repo"},
+            "prompt": "registered fallback",
+        },
+    }
+
+    result = service.prepare(
+        task_id="t_prepare",
+        task=task,
+        project={"repo": str(tmp_path / "repo"), "default_branch": "main"},
+        route={"selected_worker": "claude_code"},
+        dry_run=True,
+    )
+
+    assert Path(result.worktree.path).exists()
+    assert task["project_memory"]["memory"]["source_kind"] == "registered_repo"
+    assert statuses[-1][0:2] == ("WORKTREE_READY", "project_memory_refresh_failed")
+    assert statuses[-1][2]["error"] == "OSError"
+    assert (tmp_path / "runs" / "t_prepare" / "task.json").exists()
+
+
 def test_preparation_adds_vision_observation(tmp_path: Path):
     statuses = []
     service = _service(tmp_path, statuses=statuses)

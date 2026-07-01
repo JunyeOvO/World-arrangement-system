@@ -58,20 +58,29 @@ class TaskPreparationService:
         self.artifacts.write_json(task_id, "worktree.json", worktree.__dict__)
         task["worktree_path"] = worktree.path
         self.set_status(task_id, "WORKTREE_READY", "worktree_ready", worktree.__dict__)
-
-        task["project_memory"] = self.project_memory_refresher(
-            str(task.get("project_id") or project.get("project_id") or ""),
-            project,
-            source_path=worktree.path,
-            source_kind="worktree",
-            source_ref=task_id,
-        )
         self.artifacts.write_json(task_id, "task.json", task)
-        self.set_status(task_id, "WORKTREE_READY", "project_memory_refreshed", {
-            "source_kind": "worktree",
-            "source_ref": task_id,
-            "path": task["project_memory"].get("path"),
-        })
+
+        try:
+            task["project_memory"] = self.project_memory_refresher(
+                str(task.get("project_id") or project.get("project_id") or ""),
+                project,
+                source_path=worktree.path,
+                source_kind="worktree",
+                source_ref=task_id,
+            )
+        except Exception as exc:
+            self.set_status(task_id, "WORKTREE_READY", "project_memory_refresh_failed", {
+                "source_kind": "worktree",
+                "source_ref": task_id,
+                "error": type(exc).__name__,
+            })
+        else:
+            self.artifacts.write_json(task_id, "task.json", task)
+            self.set_status(task_id, "WORKTREE_READY", "project_memory_refreshed", {
+                "source_kind": "worktree",
+                "source_ref": task_id,
+                "path": task["project_memory"].get("path"),
+            })
 
         if task.get("image_paths") or task.get("image_base64"):
             observation = self._run_mimo_vision(task, dry_run=dry_run)
