@@ -78,6 +78,8 @@ def test_task_token_ledger_combines_codex_worker_memory_and_cost(tmp_path):
     assert ledger["worker"]["memory_hit_count"] == 7
     assert ledger["worker"]["memory_miss_count"] == 2
     assert ledger["combined"]["total_tokens"] == 1_604_000
+    assert ledger["combined"]["worker_pricing_complete"] is True
+    assert ledger["combined"]["unpriced_worker_attempts"] == 0
     assert ledger["quota_evidence"]["codex_event_count"] == 2
     assert ledger["quota_evidence"]["actual_codex_event_count"] == 1
     assert ledger["counterfactual"]["status"] == "not_measured"
@@ -165,6 +167,9 @@ def test_task_token_ledger_marks_unpriced_worker_models(tmp_path):
     assert ledger["worker"]["pricing_complete"] is False
     assert "no configured model price" in ledger["worker"]["cost_note"]
     assert ledger["worker"]["models"][0]["pricing_complete"] is False
+    assert ledger["combined"]["worker_pricing_complete"] is False
+    assert ledger["combined"]["unpriced_worker_attempts"] == 1
+    assert "Worker known_cost_usd also excludes 1 attempt" in ledger["combined"]["cost_note"]
 
 
 def test_task_token_ledger_uses_single_snapshot_reader(tmp_path, monkeypatch):

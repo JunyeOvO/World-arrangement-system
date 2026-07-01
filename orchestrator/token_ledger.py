@@ -40,11 +40,10 @@ def build_task_token_ledger(db: TaskDB, task_id: str) -> dict[str, Any]:
             "cache_read_input_tokens": worker["cache_read_input_tokens"],
             "total_tokens": combined_total,
             "known_cost_usd": worker["calculated_cost_usd"],
+            "worker_pricing_complete": worker["pricing_complete"],
+            "unpriced_worker_attempts": worker["unpriced_attempts"],
             "cost_source": "worker_model_token_pricing_only",
-            "cost_note": (
-                "Codex quota/cost telemetry is not exposed locally; Codex planning/review "
-                "tokens are estimated and excluded from USD cost."
-            ),
+            "cost_note": _combined_cost_note(worker),
         },
         "quota_evidence": {
             "codex_share_pct": codex_share_pct,
@@ -210,6 +209,20 @@ def _worker_section(metrics: list[dict[str, Any]]) -> dict[str, Any]:
         "memory_miss_count": sum(_int(row.get("memory_miss_count")) for row in metrics),
         "models": model_rows,
     }
+
+
+def _combined_cost_note(worker: dict[str, Any]) -> str:
+    note = (
+        "Codex quota/cost telemetry is not exposed locally; Codex planning/review "
+        "tokens are estimated and excluded from USD cost."
+    )
+    unpriced_attempts = _int(worker.get("unpriced_attempts"))
+    if unpriced_attempts:
+        note += (
+            f" Worker known_cost_usd also excludes {unpriced_attempts} attempt(s) "
+            "with no configured model price."
+        )
+    return note
 
 
 def _counterfactual_section(codex: dict[str, Any], baselines: list[dict[str, Any]]) -> dict[str, Any]:
