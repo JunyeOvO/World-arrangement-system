@@ -54,6 +54,50 @@ def test_connect_closes_connection_when_caller_raises(tmp_path, monkeypatch):
     assert closed == [True]
 
 
+def test_connect_enables_wal_journal_mode(tmp_path):
+    db = TaskDB(tmp_path / "state.db")
+
+    with db.connect() as con:
+        mode = con.execute("PRAGMA journal_mode").fetchone()[0]
+        timeout = con.execute("PRAGMA busy_timeout").fetchone()[0]
+
+    assert str(mode).lower() == "wal"
+    assert int(timeout) == 3000
+
+
+def test_ensure_column_treats_duplicate_column_as_idempotent(tmp_path):
+    db = TaskDB(tmp_path / "state.db")
+
+    with db.connect() as con:
+        con.execute("CREATE TABLE sample(id INTEGER PRIMARY KEY, value TEXT)")
+        db._ensure_column(con, "sample", "value", "TEXT")
+
+    with db.connect() as con:
+        columns = {row[1] for row in con.execute("PRAGMA table_info(sample)").fetchall()}
+
+    assert "value" in columns
+
+
+def test_ensure_column_swallows_duplicate_column_race(tmp_path):
+    db = TaskDB(tmp_path / "state.db")
+    calls = []
+
+    class FakeCursor:
+        def fetchall(self):
+            return []
+
+    class FakeConnection:
+        def execute(self, sql):
+            calls.append(sql)
+            if sql.startswith("PRAGMA table_info"):
+                return FakeCursor()
+            raise sqlite3.OperationalError("duplicate column name: value")
+
+    db._ensure_column(FakeConnection(), "sample", "value", "TEXT")  # type: ignore[arg-type]
+
+    assert calls == ["PRAGMA table_info(sample)", "ALTER TABLE sample ADD COLUMN value TEXT"]
+
+
 def test_init_dedupes_learned_patterns_before_unique_index(tmp_path):
     path = tmp_path / "state.db"
     con = sqlite3.connect(path)

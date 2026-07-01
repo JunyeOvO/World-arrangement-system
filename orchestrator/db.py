@@ -241,6 +241,8 @@ class TaskDB:
             try:
                 con = sqlite3.connect(self.path, timeout=3)
                 con.row_factory = sqlite3.Row
+                con.execute("PRAGMA busy_timeout=3000")
+                con.execute("PRAGMA journal_mode=WAL")
                 try:
                     yield con
                 except Exception:
@@ -271,7 +273,11 @@ class TaskDB:
     def _ensure_column(self, con: sqlite3.Connection, table: str, column: str, definition: str) -> None:
         existing = {row[1] for row in con.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
-            con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            try:
+                con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            except sqlite3.OperationalError as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
 
     def _ensure_learned_patterns_unique_index(self, con: sqlite3.Connection) -> None:
         groups = con.execute(
