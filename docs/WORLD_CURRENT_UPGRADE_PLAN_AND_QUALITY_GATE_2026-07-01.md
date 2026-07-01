@@ -33,6 +33,9 @@ Current status:
 | Project memory | MVP usable | Reduces repeated reads, but not yet a durable semantic codebase memory. |
 | Autonomy | Restricted | No auto-merge, no unsupervised high-risk changes, no production deployment without user approval. |
 
+For the current repository state, known local WIP, and immediate next work, use
+`../PROJECT_STATUS.md`.
+
 ## 2. Main Defects To Fix Next
 
 These are based on recent Codex debugging and World self-adjustment results.
@@ -303,4 +306,3 @@ Do not use World autonomously for:
 3. Implement Project Memory V2 source metadata and hazard summaries.
 4. Add measured Codex-only baselines for selected repeated task classes.
 5. Begin patch beta only after Phase B exits cleanly.
-

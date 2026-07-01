@@ -252,6 +252,8 @@ This prevents stale `EXECUTING` rows from appearing as truly running when the wo
 
 ## Useful Docs
 
+- `PROJECT_STATUS.md`
+- `docs/README.md`
 - `docs/WORLD_CURRENT_UPGRADE_PLAN_AND_QUALITY_GATE_2026-07-01.md`
 - `docs/WORLD_EXECUTION_PROTOCOL.md`
 - `docs/WORLD_SYSTEM_OVERVIEW.md`
