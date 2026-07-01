@@ -31,6 +31,27 @@ def test_file_lock_removes_stale_lock_directory(tmp_path: Path, monkeypatch):
     assert not lock.exists()
 
 
+def test_file_lock_retries_transient_permission_error(tmp_path: Path, monkeypatch):
+    target = tmp_path / "process.json"
+    lock = target.with_name("process.json.lock")
+    real_mkdir = Path.mkdir
+    calls = {"permission_errors": 0}
+
+    def flaky_mkdir(self, *args, **kwargs):
+        if self == lock and calls["permission_errors"] == 0:
+            calls["permission_errors"] += 1
+            raise PermissionError("transient Windows mkdir race")
+        return real_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", flaky_mkdir)
+
+    write_json_file(target, {"status": "ok"})
+
+    assert calls["permission_errors"] == 1
+    assert read_json_file(target)["status"] == "ok"
+    assert not lock.exists()
+
+
 def test_update_json_file_serializes_concurrent_read_modify_write(tmp_path: Path):
     target = tmp_path / "process.json"
     write_json_file(target, {"count": 0})
