@@ -17,6 +17,9 @@ from .task_result_document import build_final_markdown
 from .verifier import VerifyResult, write_verify_result
 
 
+LOCK_TIMEOUT_SEC = 5.0
+
+
 @dataclass
 class StaleWorkerReapResult:
     status: str
@@ -60,7 +63,16 @@ class StaleWorkerReaper:
         if self.now_func() - last_seen_ts < self.stale_after_sec:
             return None
         pid = process.get("pid")
-        if isinstance(pid, int) and self.pid_alive_func(pid):
+        process_token = str(process.get("process_token") or "")
+        heartbeat_token = str(heartbeat.get("process_token") or "")
+        if process_token and heartbeat_token and process_token != heartbeat_token:
+            return self._fail_stale_task(
+                task,
+                process,
+                control_dir,
+                reason="heartbeat token does not match process token",
+            )
+        if not process_token and isinstance(pid, int) and self.pid_alive_func(pid):
             return None
 
         stdout_path = Path(str(process.get("stdout_path") or run_dir / "worker" / "worker.stream.jsonl"))
@@ -123,13 +135,14 @@ class StaleWorkerReaper:
         task: dict[str, Any],
         process: dict[str, Any],
         control_dir: Path,
+        reason: str = "worker process is not alive and no recoverable success result was found",
     ) -> StaleWorkerReapResult:
         process.update({"status": "failed", "finished_at": now_iso(), "reaped_reason": "stale_worker_no_live_pid"})
         write_json_file(control_dir / "process.json", process)
         return StaleWorkerReapResult(
             status="FAILED_FINAL",
             event_type="stale_worker_failed",
-            payload={"reason": "worker process is not alive and no recoverable success result was found"},
+            payload={"reason": reason},
         )
 
 
@@ -144,12 +157,35 @@ def read_json_if_exists(path: Path) -> dict[str, Any] | None:
 
 def write_json_file(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-    try:
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(path)
-    finally:
-        tmp.unlink(missing_ok=True)
+    with _file_lock(path):
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        try:
+            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(path)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+
+class _file_lock:
+    def __init__(self, path: Path) -> None:
+        self.lock_path = path.with_name(f"{path.name}.lock")
+
+    def __enter__(self) -> None:
+        deadline = time.monotonic() + LOCK_TIMEOUT_SEC
+        while True:
+            try:
+                self.lock_path.mkdir()
+                return None
+            except FileExistsError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"timed out waiting for lock: {self.lock_path}")
+                time.sleep(0.02)
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        try:
+            self.lock_path.rmdir()
+        except OSError:
+            pass
 
 
 def parse_timestamp(value: Any) -> float | None:

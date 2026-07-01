@@ -27,7 +27,12 @@ def test_run_managed_process_times_out_and_writes_control_files(tmp_path):
     assert process["status"] == "timed_out"
     assert process["timed_out"] is True
     assert process["pid"] > 0
+    assert process["process_token"]
     assert heartbeat["status"] == "timed_out"
+    assert heartbeat["process_token"] == process["process_token"]
+    assert "stream_closed" in (tmp_path / "worker" / "stdout.log").read_text(encoding="utf-8")
+    assert not (tmp_path / "control" / "process.json.lock").exists()
+    assert not (tmp_path / "control" / "heartbeat.json.lock").exists()
 
 
 def test_request_cancel_writes_cancel_file_and_marks_process(monkeypatch, tmp_path):
@@ -41,7 +46,7 @@ def test_request_cancel_writes_cancel_file_and_marks_process(monkeypatch, tmp_pa
     control = tmp_path / "control"
     control.mkdir()
     (control / "process.json").write_text(
-        json.dumps({"pid": 12345, "status": "running"}), encoding="utf-8"
+        json.dumps({"pid": 12345, "status": "running", "process_token": "token-1"}), encoding="utf-8"
     )
 
     result = request_cancel(tmp_path, "stop requested")
@@ -50,6 +55,7 @@ def test_request_cancel_writes_cancel_file_and_marks_process(monkeypatch, tmp_pa
 
     assert calls == [12345]
     assert result["pid"] == 12345
+    assert result["process_token"] == "token-1"
     assert cancel["reason"] == "stop requested"
     assert process["status"] == "cancelled"
     assert process["cancel_reason"] == "stop requested"

@@ -12,6 +12,7 @@ from typing import Any
 
 
 POLL_INTERVAL_SEC = 1.0
+LOCK_TIMEOUT_SEC = 5.0
 
 
 @dataclass
@@ -46,6 +47,7 @@ def run_managed_process(
     cancel_path = control_dir / "cancel.requested"
     process_path = control_dir / "process.json"
     heartbeat_path = control_dir / "heartbeat.json"
+    process_token = uuid.uuid4().hex
 
     started = time.monotonic()
     with stdout_path.open("w", encoding="utf-8", errors="replace") as stdout_file, stderr_path.open(
@@ -76,6 +78,7 @@ def run_managed_process(
                 command=redact_command(cmd),
                 stdout_path=stdout_path,
                 stderr_path=stderr_path,
+                process_token=process_token,
             ),
         )
 
@@ -92,6 +95,7 @@ def run_managed_process(
                     "task_id": task_id,
                     "label": label,
                     "pid": proc.pid,
+                    "process_token": process_token,
                     "status": status,
                     "last_seen": _utc_now(),
                     "elapsed_sec": round(elapsed, 3),
@@ -146,11 +150,13 @@ def run_managed_process(
             "task_id": task_id,
             "label": label,
             "pid": payload.get("pid"),
+            "process_token": payload.get("process_token"),
             "status": status,
             "last_seen": _utc_now(),
             "elapsed_sec": round(elapsed, 3),
         },
     )
+    _append_stream_sentinel(stdout_path, status=status, returncode=returncode, elapsed_sec=round(elapsed, 3))
 
     return ManagedProcessResult(
         returncode=returncode,
@@ -195,6 +201,7 @@ def request_cancel(run_dir: Path, reason: str = "") -> dict[str, Any]:
         "run_dir": str(run_dir),
         "cancel_file": str(cancel_path),
         "pid": pid,
+        "process_token": process.get("process_token"),
         "termination": termination,
     }
 
@@ -285,11 +292,13 @@ def _process_payload(
     command: list[str],
     stdout_path: Path,
     stderr_path: Path,
+    process_token: str,
 ) -> dict[str, Any]:
     return {
         "task_id": task_id,
         "label": label,
         "pid": pid,
+        "process_token": process_token,
         "status": status,
         "started_at": started_at,
         "timeout_sec": timeout_sec,
@@ -303,20 +312,59 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     last_error: OSError | None = None
     for attempt in range(5):
-        tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-        try:
-            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-            tmp.replace(path)
-            return
-        except OSError as exc:
-            last_error = exc
+        with _file_lock(path):
+            tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
             try:
-                tmp.unlink(missing_ok=True)
-            except OSError:
-                pass
-            time.sleep(0.05 * (attempt + 1))
+                tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+                tmp.replace(path)
+                return
+            except OSError as exc:
+                last_error = exc
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                time.sleep(0.05 * (attempt + 1))
     if last_error is not None:
         raise last_error
+
+
+class _file_lock:
+    def __init__(self, path: Path) -> None:
+        self.lock_path = path.with_name(f"{path.name}.lock")
+
+    def __enter__(self) -> None:
+        deadline = time.monotonic() + LOCK_TIMEOUT_SEC
+        while True:
+            try:
+                self.lock_path.mkdir()
+                return None
+            except FileExistsError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"timed out waiting for lock: {self.lock_path}")
+                time.sleep(0.02)
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        try:
+            self.lock_path.rmdir()
+        except OSError:
+            pass
+
+
+def _append_stream_sentinel(stdout_path: Path, *, status: str, returncode: int | None, elapsed_sec: float) -> None:
+    sentinel = {
+        "type": "world.process",
+        "event": "stream_closed",
+        "status": status,
+        "returncode": returncode,
+        "elapsed_sec": elapsed_sec,
+        "closed_at": _utc_now(),
+    }
+    try:
+        with stdout_path.open("a", encoding="utf-8", errors="replace") as stream:
+            stream.write(json.dumps(sentinel, ensure_ascii=False, separators=(",", ":")) + "\n")
+    except OSError:
+        return
 
 
 def _read_json(path: Path) -> dict[str, Any]:

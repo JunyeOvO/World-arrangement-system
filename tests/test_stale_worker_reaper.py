@@ -40,14 +40,20 @@ def _task(run_dir: Path, *, status: str = "EXECUTING") -> dict:
     }
 
 
-def _write_control(run_dir: Path, stdout_path: Path) -> None:
+def _write_control(run_dir: Path, stdout_path: Path, *, process_token: str | None = None, heartbeat_token: str | None = None) -> None:
     control_dir = run_dir / "control"
     control_dir.mkdir(parents=True)
+    process_payload = {"pid": 999999, "status": "running", "stdout_path": str(stdout_path)}
+    if process_token is not None:
+        process_payload["process_token"] = process_token
+    heartbeat_payload = {"last_seen": 1000}
+    if heartbeat_token is not None:
+        heartbeat_payload["process_token"] = heartbeat_token
     (control_dir / "process.json").write_text(
-        json.dumps({"pid": 999999, "status": "running", "stdout_path": str(stdout_path)}),
+        json.dumps(process_payload),
         encoding="utf-8",
     )
-    (control_dir / "heartbeat.json").write_text(json.dumps({"last_seen": 1000}), encoding="utf-8")
+    (control_dir / "heartbeat.json").write_text(json.dumps(heartbeat_payload), encoding="utf-8")
 
 
 def _reaper(tmp_path: Path) -> StaleWorkerReaper:
@@ -123,3 +129,41 @@ def test_reap_ignores_fresh_heartbeat(tmp_path: Path) -> None:
     _write_control(run_dir, stdout_path)
 
     assert reaper.reap(_task(run_dir)) is None
+
+
+def test_reap_does_not_trust_alive_pid_when_process_token_is_present(tmp_path: Path) -> None:
+    reaper = StaleWorkerReaper(
+        artifacts=ArtifactStore(tmp_path / "runs"),
+        dry_verify_func=_verify,
+        task_requires_diff=lambda task: False,
+        now_func=lambda: 1200,
+        pid_alive_func=lambda pid: True,
+        stale_after_sec=120,
+    )
+    run_dir = reaper.artifacts.run_dir("t_reap")
+    stdout_path = run_dir / "worker" / "worker.stream.jsonl"
+    stdout_path.parent.mkdir(parents=True)
+    stdout_path.write_text(json.dumps({"type": "result", "subtype": "failed", "result": "failed"}) + "\n", encoding="utf-8")
+    _write_control(run_dir, stdout_path, process_token="token-1", heartbeat_token="token-1")
+
+    result = reaper.reap(_task(run_dir))
+
+    assert result is not None
+    assert result.status == "FAILED_FINAL"
+    assert result.event_type == "stale_worker_failed"
+
+
+def test_reap_fails_mismatched_process_and_heartbeat_token(tmp_path: Path) -> None:
+    reaper = _reaper(tmp_path)
+    run_dir = reaper.artifacts.run_dir("t_reap")
+    stdout_path = run_dir / "worker" / "worker.stream.jsonl"
+    stdout_path.parent.mkdir(parents=True)
+    stdout_path.write_text("", encoding="utf-8")
+    _write_control(run_dir, stdout_path, process_token="token-1", heartbeat_token="token-2")
+
+    result = reaper.reap(_task(run_dir))
+
+    assert result is not None
+    assert result.status == "FAILED_FINAL"
+    assert result.payload["reason"] == "heartbeat token does not match process token"
+    assert not (run_dir / "control" / "process.json.lock").exists()
