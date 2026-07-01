@@ -45,7 +45,7 @@ class FileLock:
             try:
                 self.lock_path.mkdir()
                 return None
-            except FileExistsError:
+            except (FileExistsError, PermissionError):
                 if _remove_stale_lock(self.lock_path):
                     continue
                 if time.monotonic() >= deadline:

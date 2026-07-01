@@ -98,6 +98,37 @@ def test_build_metric_does_not_stand_in_for_test_result():
     assert row["quality_state"] == "unknown"
 
 
+def test_failed_and_cancelled_quality_states_are_literal():
+    failed = derive_task_outcome(
+        {"task_id": "task_failed", "project_id": "p", "status": "FAILED_FINAL", "user_goal": "fix"},
+    )
+    cancelled = derive_task_outcome(
+        {"task_id": "task_cancelled", "project_id": "p", "status": "CANCELLED", "user_goal": "fix"},
+    )
+
+    assert failed["quality_state"] == "failed"
+    assert cancelled["quality_state"] == "cancelled"
+
+
+def test_failed_build_blocks_verified_even_when_tests_pass():
+    row = derive_task_outcome(
+        {
+            "task_id": "task_build_failed",
+            "project_id": "travel_with_me",
+            "status": "COMPLETED_WITH_PATCH",
+            "user_goal": "修复 UI bug",
+        },
+        verify={"tests_passed": True, "build_passed": False},
+        review={"approved": True},
+        result={"changed_files": ["a.ts"]},
+    )
+
+    assert row["tests_passed"] is True
+    assert row["build_passed"] is False
+    assert row["review_approved"] is True
+    assert row["quality_state"] == "unknown"
+
+
 def test_summarize_outcomes_rates():
     summary = summarize_outcomes([
         {"outcome": "success", "tests_passed": True, "review_approved": True, "user_acceptance": "accepted"},
