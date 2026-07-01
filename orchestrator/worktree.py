@@ -53,6 +53,8 @@ def cleanup_worktree(repo: str, path: str, dry_run: bool = False) -> None:
         repo_path = Path(repo).resolve()
         if target == repo_path:
             raise WorktreeError("refusing to cleanup repository root")
+        if target.parent.name != "worktrees":
+            raise WorktreeError("refusing to cleanup path outside worktrees directory")
         shutil.rmtree(target, ignore_errors=True)
         return
     subprocess.run(["git", "-C", repo, "worktree", "remove", "--force", path], timeout=60, check=False)

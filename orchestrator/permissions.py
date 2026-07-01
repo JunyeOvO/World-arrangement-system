@@ -198,9 +198,12 @@ def check_worker_launch_command(worker_name: str, command: str) -> PermissionChe
     or destructive command pattern.
     """
     wp = load_permissions(worker_name)
+    normalized = command.strip().replace("<prompt>", "PROMPT")
     for pattern in wp.bash_deny:
-        if _command_matches(command.strip(), pattern):
+        if _command_matches(normalized, pattern):
             return PermissionCheck(False, f"worker command denied by pattern: {pattern}", False, pattern, "worker_command", command)
+    if _contains_shell_control_operator(normalized):
+        return PermissionCheck(False, "worker command uses shell control operators", False, "", "worker_command", command)
     return PermissionCheck(True, "worker command passed deny-list check", False, "", "worker_command", command)
 
 
@@ -259,7 +262,40 @@ def _contains_shell_control_operator(command: str) -> bool:
     control_tokens = {";", "&&", "||", "|", ">", ">>", "<", "<<", "&"}
     if any(token in control_tokens for token in tokens):
         return True
-    return bool(re.search(r"(?<!\\)(;|&&|\|\||\||>>?|<<?|`|\$\()", command))
+    return _has_unquoted_shell_control_operator(command)
+
+
+def _has_unquoted_shell_control_operator(command: str) -> bool:
+    quote: str | None = None
+    escaped = False
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\":
+            escaped = True
+            index += 1
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            index += 1
+            continue
+        if command.startswith("$(", index):
+            return True
+        if char in {";", "|", ">", "<", "`"}:
+            return True
+        if char == "&":
+            return True
+        index += 1
+    return False
 
 
 def _default_permissions(worker_name: str) -> WorkerPermissions:

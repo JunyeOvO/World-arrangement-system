@@ -67,6 +67,24 @@ def test_runtime_store_cleanup_rejects_path_traversal(tmp_path, monkeypatch):
     assert marker.exists()
 
 
+def test_runtime_store_write_json_rejects_unsafe_relative_path(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    world_home = tmp_path / "world-home"
+    outside = world_home / "outside"
+    outside.mkdir(parents=True)
+    monkeypatch.setenv("WORLD_HOME", str(world_home))
+    store = RuntimeStore(repo, "write_json_guard")
+
+    with pytest.raises(ValueError):
+        store.write_json("../outside/escape.json", {"bad": True})
+    with pytest.raises(ValueError):
+        store.write_json(str(outside / "absolute.json"), {"bad": True})
+
+    assert not (outside / "escape.json").exists()
+    assert not (outside / "absolute.json").exists()
+
+
 def test_ignore_manager_appends_to_git_info_exclude_idempotently(tmp_path):
     repo = tmp_path / "repo"
     _init_repo(repo)

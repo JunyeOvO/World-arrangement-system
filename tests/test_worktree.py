@@ -23,3 +23,15 @@ def test_dry_run_cleanup_refuses_repo_root(tmp_path: Path):
 
     with pytest.raises(WorktreeError):
         cleanup_worktree(str(repo), str(repo), dry_run=True)
+
+
+def test_dry_run_cleanup_refuses_path_outside_worktrees(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "not-worktrees" / "task1"
+    outside.mkdir(parents=True)
+
+    with pytest.raises(WorktreeError):
+        cleanup_worktree(str(repo), str(outside), dry_run=True)
+
+    assert outside.exists()

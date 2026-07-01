@@ -95,7 +95,7 @@ class RuntimeStore:
         )
 
     def write_json(self, relative_path: str, payload: dict[str, Any]) -> Path:
-        path = self.project_dir / relative_path
+        path = _resolve_project_file(self.project_dir, relative_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return path
@@ -160,3 +160,13 @@ def _safe_path_segment(value: str, field: str) -> str:
     if Path(text).name != text:
         raise ValueError(f"invalid {field}: must be a single path segment")
     return text
+
+
+def _resolve_project_file(project_dir: Path, relative_path: str) -> Path:
+    relative = Path(relative_path)
+    if relative.is_absolute():
+        raise ValueError("runtime store path must be relative")
+    project_root = project_dir.resolve()
+    path = (project_root / relative).resolve()
+    path.relative_to(project_root)
+    return path
